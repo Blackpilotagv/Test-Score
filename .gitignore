@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+backend/venv/
+
+# Build & Output
+frontend/dist/
+frontend/dist-ssr/
+*.egg-info/
+__pycache__/
+backend/app/__pycache__/
+
+# Environment & Secrets
+.env
+.env.local
+.env.production
+backend/.env
+frontend/.env
+
+# Local DB & Logs
+*.db
+*.log
+.DS_Store
+.idea/
+.vscode/
