@@ -1,13 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
-from sqlalchemy.orm import Session
-from typing import List, Optional
 from datetime import datetime
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from pymongo import DESCENDING, ASCENDING
 
-from app.database.session import get_db
-from app.models.models import User, Exam, PastYearPaper, PastYearPaperStatus, Question, Payment, PaymentStatus, PaymentMethod, AuditLog
+from app.database.session import get_db, get_next_sequence
+from app.models.models import (
+    PastYearPaperStatus, PaymentStatus, PaymentMethod, to_mongo_doc
+)
 from app.schemas.schemas import (
     PastYearPaperCreate, PastYearPaperUpdate, PastYearPaperOut,
-    QuestionBase, QuestionCreate, Group2QuestionCreate, QuestionUpdate, QuestionFullOut,
+    QuestionCreate, Group2QuestionCreate, QuestionFullOut,
     AdminGrantAccessRequest
 )
 from app.api.deps import get_admin_user
@@ -21,22 +23,30 @@ def get_all_past_year_papers(
     exam_id: Optional[int] = None,
     year: Optional[int] = None,
     paper_status: Optional[str] = None,
-    db: Session = Depends(get_db),
-    admin: User = Depends(get_admin_user)
+    db = Depends(get_db),
+    admin = Depends(get_admin_user)
 ):
-    query = db.query(PastYearPaper)
+    query_filter = {}
     if exam_id:
-        query = query.filter(PastYearPaper.exam_id == exam_id)
+        query_filter["exam_id"] = exam_id
     if year:
-        query = query.filter(PastYearPaper.year == year)
+        query_filter["year"] = year
     if paper_status:
-        query = query.filter(PastYearPaper.status == paper_status)
+        query_filter["status"] = paper_status.upper()
 
-    papers = query.order_by(PastYearPaper.year.desc(), PastYearPaper.id.desc()).all()
+    paper_docs = list(db.past_year_papers.find(
+        query_filter,
+        sort=[("year", DESCENDING), ("id", DESCENDING)]
+    ))
     out = []
-    for p in papers:
-        cfg = EXAM_CONFIG.get(p.exam.slug) if p.exam else None
+    for p_doc in paper_docs:
+        p = to_mongo_doc(p_doc)
+        exam_doc = db.exams.find_one({"id": p.exam_id}) if p.exam_id else None
+        exam_name = exam_doc["name"] if exam_doc else ""
+        exam_slug = exam_doc["slug"] if exam_doc else ""
+        cfg = EXAM_CONFIG.get(exam_slug)
         allowed_langs = cfg["allowed_languages"] if cfg else ["ta"]
+
         out.append(PastYearPaperOut(
             id=p.id,
             exam_id=p.exam_id,
@@ -49,8 +59,8 @@ def get_all_past_year_papers(
             negative_mark=p.negative_mark,
             price=p.price,
             status=p.status,
-            exam_name=p.exam.name if p.exam else "",
-            exam_slug=p.exam.slug if p.exam else "",
+            exam_name=exam_name,
+            exam_slug=exam_slug,
             allowed_languages=allowed_langs,
             created_at=p.created_at,
             updated_at=p.updated_at
@@ -60,43 +70,45 @@ def get_all_past_year_papers(
 @router.post("", response_model=PastYearPaperOut)
 def create_past_year_paper(
     req: PastYearPaperCreate,
-    db: Session = Depends(get_db),
-    admin: User = Depends(get_admin_user)
+    db = Depends(get_db),
+    admin = Depends(get_admin_user)
 ):
-    exam = db.query(Exam).filter(Exam.id == req.exam_id).first()
-    if not exam:
+    exam_doc = db.exams.find_one({"id": req.exam_id})
+    if not exam_doc:
         raise HTTPException(status_code=404, detail="Exam category not found")
 
-    paper = PastYearPaper(
-        exam_id=req.exam_id,
-        year=req.year,
-        title=req.title,
-        description=req.description,
-        duration_minutes=req.duration_minutes,
-        question_count=req.question_count,
-        marks_per_question=req.marks_per_question,
-        negative_mark=req.negative_mark,
-        price=req.price,
-        status=req.status,
-        created_by=admin.id,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
-    )
-    db.add(paper)
-    db.commit()
-    db.refresh(paper)
+    paper_id = get_next_sequence(db, "past_year_paper_id")
+    now = datetime.utcnow()
+    paper_doc = {
+        "id": paper_id,
+        "exam_id": req.exam_id,
+        "year": req.year,
+        "title": req.title,
+        "description": req.description,
+        "duration_minutes": req.duration_minutes,
+        "question_count": req.question_count,
+        "marks_per_question": req.marks_per_question,
+        "negative_mark": req.negative_mark,
+        "price": req.price,
+        "status": req.status if hasattr(req, 'status') else PastYearPaperStatus.DRAFT,
+        "created_by": admin.id,
+        "created_at": now,
+        "updated_at": now
+    }
+    db.past_year_papers.insert_one(paper_doc)
+    paper = to_mongo_doc(paper_doc)
 
-    # Audit log
-    audit = AuditLog(
-        user_id=admin.id,
-        action="CREATE_PAST_YEAR_PAPER",
-        past_year_paper_id=paper.id,
-        details=f"Created Past Year Paper '{paper.title}' for {exam.name} ({paper.year})"
-    )
-    db.add(audit)
-    db.commit()
+    log_id = get_next_sequence(db, "audit_log_id")
+    db.audit_logs.insert_one({
+        "id": log_id,
+        "user_id": admin.id,
+        "action": "CREATE_PAST_YEAR_PAPER",
+        "past_year_paper_id": paper.id,
+        "details": f"Created Past Year Paper '{paper.title}' for {exam_doc['name']} ({paper.year})",
+        "created_at": now
+    })
 
-    cfg = EXAM_CONFIG.get(exam.slug)
+    cfg = EXAM_CONFIG.get(exam_doc["slug"])
     allowed_langs = cfg["allowed_languages"] if cfg else ["ta"]
 
     return PastYearPaperOut(
@@ -111,8 +123,8 @@ def create_past_year_paper(
         negative_mark=paper.negative_mark,
         price=paper.price,
         status=paper.status,
-        exam_name=exam.name,
-        exam_slug=exam.slug,
+        exam_name=exam_doc["name"],
+        exam_slug=exam_doc["slug"],
         allowed_languages=allowed_langs,
         created_at=paper.created_at,
         updated_at=paper.updated_at
@@ -121,21 +133,26 @@ def create_past_year_paper(
 @router.get("/{paper_id}")
 def get_past_year_paper_details(
     paper_id: int,
-    db: Session = Depends(get_db),
-    admin: User = Depends(get_admin_user)
+    db = Depends(get_db),
+    admin = Depends(get_admin_user)
 ):
-    paper = db.query(PastYearPaper).filter(PastYearPaper.id == paper_id).first()
-    if not paper:
+    paper_doc = db.past_year_papers.find_one({"id": paper_id})
+    if not paper_doc:
         raise HTTPException(status_code=404, detail="Past year paper not found")
+    paper = to_mongo_doc(paper_doc)
 
-    questions = db.query(Question).filter(
-        Question.past_year_paper_id == paper.id
-    ).order_by(Question.question_order.asc(), Question.language.asc()).all()
+    q_docs = list(db.questions.find(
+        {"past_year_paper_id": paper.id},
+        sort=[("question_order", ASCENDING), ("language", ASCENDING)]
+    ))
 
-    cfg = EXAM_CONFIG.get(paper.exam.slug) if paper.exam else None
+    exam_doc = db.exams.find_one({"id": paper.exam_id}) if paper.exam_id else None
+    exam_name = exam_doc["name"] if exam_doc else ""
+    exam_slug = exam_doc["slug"] if exam_doc else ""
+    cfg = EXAM_CONFIG.get(exam_slug)
     allowed_langs = cfg["allowed_languages"] if cfg else ["ta"]
 
-    q_outs = [QuestionFullOut.model_validate(q) for q in questions]
+    q_outs = [QuestionFullOut.model_validate(q) for q in q_docs]
 
     return {
         "paper": PastYearPaperOut(
@@ -150,8 +167,8 @@ def get_past_year_paper_details(
             negative_mark=paper.negative_mark,
             price=paper.price,
             status=paper.status,
-            exam_name=paper.exam.name if paper.exam else "",
-            exam_slug=paper.exam.slug if paper.exam else "",
+            exam_name=exam_name,
+            exam_slug=exam_slug,
             allowed_languages=allowed_langs,
             created_at=paper.created_at,
             updated_at=paper.updated_at
@@ -163,49 +180,35 @@ def get_past_year_paper_details(
 def update_past_year_paper(
     paper_id: int,
     req: PastYearPaperUpdate,
-    db: Session = Depends(get_db),
-    admin: User = Depends(get_admin_user)
+    db = Depends(get_db),
+    admin = Depends(get_admin_user)
 ):
-    paper = db.query(PastYearPaper).filter(PastYearPaper.id == paper_id).first()
-    if not paper:
+    paper_doc = db.past_year_papers.find_one({"id": paper_id})
+    if not paper_doc:
         raise HTTPException(status_code=404, detail="Past year paper not found")
 
-    if req.exam_id is not None:
-        paper.exam_id = req.exam_id
-    if req.year is not None:
-        paper.year = req.year
-    if req.title is not None:
-        paper.title = req.title
-    if req.description is not None:
-        paper.description = req.description
-    if req.duration_minutes is not None:
-        paper.duration_minutes = req.duration_minutes
-    if req.question_count is not None:
-        paper.question_count = req.question_count
-    if req.marks_per_question is not None:
-        paper.marks_per_question = req.marks_per_question
-    if req.negative_mark is not None:
-        paper.negative_mark = req.negative_mark
-    if req.price is not None:
-        paper.price = req.price
-    if req.status is not None:
-        paper.status = req.status
+    update_fields = req.model_dump(exclude_unset=True)
+    update_fields["updated_at"] = datetime.utcnow()
 
-    paper.updated_at = datetime.utcnow()
-    db.commit()
-    db.refresh(paper)
+    db.past_year_papers.update_one({"id": paper_id}, {"$set": update_fields})
+    updated_doc = db.past_year_papers.find_one({"id": paper_id})
+    paper = to_mongo_doc(updated_doc)
 
-    # Audit log
-    audit = AuditLog(
-        user_id=admin.id,
-        action="UPDATE_PAST_YEAR_PAPER",
-        past_year_paper_id=paper.id,
-        details=f"Updated Past Year Paper status/metadata to {paper.status}"
-    )
-    db.add(audit)
-    db.commit()
+    now = datetime.utcnow()
+    log_id = get_next_sequence(db, "audit_log_id")
+    db.audit_logs.insert_one({
+        "id": log_id,
+        "user_id": admin.id,
+        "action": "UPDATE_PAST_YEAR_PAPER",
+        "past_year_paper_id": paper.id,
+        "details": f"Updated Past Year Paper status/metadata to {paper.status}",
+        "created_at": now
+    })
 
-    cfg = EXAM_CONFIG.get(paper.exam.slug) if paper.exam else None
+    exam_doc = db.exams.find_one({"id": paper.exam_id}) if paper.exam_id else None
+    exam_name = exam_doc["name"] if exam_doc else ""
+    exam_slug = exam_doc["slug"] if exam_doc else ""
+    cfg = EXAM_CONFIG.get(exam_slug)
     allowed_langs = cfg["allowed_languages"] if cfg else ["ta"]
 
     return PastYearPaperOut(
@@ -220,8 +223,8 @@ def update_past_year_paper(
         negative_mark=paper.negative_mark,
         price=paper.price,
         status=paper.status,
-        exam_name=paper.exam.name if paper.exam else "",
-        exam_slug=paper.exam.slug if paper.exam else "",
+        exam_name=exam_name,
+        exam_slug=exam_slug,
         allowed_languages=allowed_langs,
         created_at=paper.created_at,
         updated_at=paper.updated_at
@@ -230,15 +233,15 @@ def update_past_year_paper(
 @router.delete("/{paper_id}")
 def delete_past_year_paper(
     paper_id: int,
-    db: Session = Depends(get_db),
-    admin: User = Depends(get_admin_user)
+    db = Depends(get_db),
+    admin = Depends(get_admin_user)
 ):
-    paper = db.query(PastYearPaper).filter(PastYearPaper.id == paper_id).first()
-    if not paper:
+    paper_doc = db.past_year_papers.find_one({"id": paper_id})
+    if not paper_doc:
         raise HTTPException(status_code=404, detail="Past year paper not found")
 
-    db.delete(paper)
-    db.commit()
+    db.questions.delete_many({"past_year_paper_id": paper_id})
+    db.past_year_papers.delete_one({"id": paper_id})
 
     return {"message": f"Past Year Paper {paper_id} deleted successfully."}
 
@@ -246,90 +249,108 @@ def delete_past_year_paper(
 def add_question_to_past_year_paper(
     paper_id: int,
     req: QuestionCreate,
-    db: Session = Depends(get_db),
-    admin: User = Depends(get_admin_user)
+    db = Depends(get_db),
+    admin = Depends(get_admin_user)
 ):
-    paper = db.query(PastYearPaper).filter(PastYearPaper.id == paper_id).first()
-    if not paper:
+    paper_doc = db.past_year_papers.find_one({"id": paper_id})
+    if not paper_doc:
         raise HTTPException(status_code=404, detail="Past year paper not found")
 
-    q = Question(
-        past_year_paper_id=paper.id,
-        question_group_id=req.question_group_id,
-        language=req.language,
-        question_text=req.question_text,
-        option_a=req.option_a,
-        option_b=req.option_b,
-        option_c=req.option_c,
-        option_d=req.option_d,
-        correct_option=req.correct_option.upper(),
-        explanation=req.explanation,
-        question_order=req.question_order,
-        source=req.source,
-        question_source=req.question_source,
-        status=req.status
-    )
-    db.add(q)
+    q_id = get_next_sequence(db, "question_id")
+    now = datetime.utcnow()
+    q_doc = {
+        "id": q_id,
+        "test_id": None,
+        "question_set_id": None,
+        "past_year_paper_id": paper_id,
+        "question_group_id": req.question_group_id,
+        "language": req.language,
+        "question_text": req.question_text,
+        "option_a": req.option_a,
+        "option_b": req.option_b,
+        "option_c": req.option_c,
+        "option_d": req.option_d,
+        "correct_option": req.correct_option.upper(),
+        "explanation": req.explanation,
+        "question_order": req.question_order,
+        "source": req.source if hasattr(req, 'source') else "MANUAL",
+        "question_source": getattr(req, 'question_source', "ORIGINAL"),
+        "status": getattr(req, 'status', "ACTIVE"),
+        "created_at": now,
+        "updated_at": now
+    }
+    db.questions.insert_one(q_doc)
 
-    # Update paper question count
-    unique_count = db.query(Question.question_group_id).filter(Question.past_year_paper_id == paper.id).distinct().count()
-    paper.question_count = unique_count
-    db.commit()
-    db.refresh(q)
+    groups = db.questions.distinct("question_group_id", {"past_year_paper_id": paper_id})
+    db.past_year_papers.update_one({"id": paper_id}, {"$set": {"question_count": len(groups)}})
 
-    return QuestionFullOut.model_validate(q)
+    return QuestionFullOut.model_validate(q_doc)
 
 @router.post("/{paper_id}/questions/group2")
 def add_group2_question_to_past_year_paper(
     paper_id: int,
     req: Group2QuestionCreate,
-    db: Session = Depends(get_db),
-    admin: User = Depends(get_admin_user)
+    db = Depends(get_db),
+    admin = Depends(get_admin_user)
 ):
-    paper = db.query(PastYearPaper).filter(PastYearPaper.id == paper_id).first()
-    if not paper:
+    paper_doc = db.past_year_papers.find_one({"id": paper_id})
+    if not paper_doc:
         raise HTTPException(status_code=404, detail="Past year paper not found")
 
-    # Generate next question_group_id
-    max_grp = db.query(Question.question_group_id).order_by(Question.question_group_id.desc()).first()
-    next_grp_id = (max_grp[0] + 1) if max_grp else 1001
+    next_grp_id = get_next_sequence(db, "question_group_id")
+    now = datetime.utcnow()
 
-    q_ta = Question(
-        past_year_paper_id=paper.id,
-        question_group_id=next_grp_id,
-        language="ta",
-        question_text=req.question_text_ta,
-        option_a=req.option_a_ta,
-        option_b=req.option_b_ta,
-        option_c=req.option_c_ta,
-        option_d=req.option_d_ta,
-        correct_option=req.correct_option_ta.upper(),
-        explanation=req.explanation_ta,
-        question_order=req.question_order,
-        source="MANUAL",
-        question_source=req.question_source
-    )
-    q_en = Question(
-        past_year_paper_id=paper.id,
-        question_group_id=next_grp_id,
-        language="en",
-        question_text=req.question_text_en,
-        option_a=req.option_a_en,
-        option_b=req.option_b_en,
-        option_c=req.option_c_en,
-        option_d=req.option_d_en,
-        correct_option=req.correct_option_en.upper(),
-        explanation=req.explanation_en,
-        question_order=req.question_order,
-        source="MANUAL",
-        question_source=req.question_source
-    )
-    db.add(q_ta)
-    db.add(q_en)
+    q_ta_id = get_next_sequence(db, "question_id")
+    q_ta_doc = {
+        "id": q_ta_id,
+        "test_id": None,
+        "question_set_id": None,
+        "past_year_paper_id": paper_id,
+        "question_group_id": next_grp_id,
+        "language": "ta",
+        "question_text": req.question_text_ta,
+        "option_a": req.option_a_ta,
+        "option_b": req.option_b_ta,
+        "option_c": req.option_c_ta,
+        "option_d": req.option_d_ta,
+        "correct_option": req.correct_option_ta.upper(),
+        "explanation": req.explanation_ta,
+        "question_order": req.question_order,
+        "source": "MANUAL",
+        "question_source": getattr(req, 'question_source', "ORIGINAL"),
+        "status": "ACTIVE",
+        "created_at": now,
+        "updated_at": now
+    }
 
-    unique_count = db.query(Question.question_group_id).filter(Question.past_year_paper_id == paper.id).distinct().count() + 1
-    paper.question_count = unique_count
-    db.commit()
+    q_en_id = get_next_sequence(db, "question_id")
+    q_en_doc = {
+        "id": q_en_id,
+        "test_id": None,
+        "question_set_id": None,
+        "past_year_paper_id": paper_id,
+        "question_group_id": next_grp_id,
+        "language": "en",
+        "question_text": req.question_text_en,
+        "option_a": req.option_a_en,
+        "option_b": req.option_b_en,
+        "option_c": req.option_c_en,
+        "option_d": req.option_d_en,
+        "correct_option": req.correct_option_en.upper(),
+        "explanation": req.explanation_en,
+        "question_order": req.question_order,
+        "source": "MANUAL",
+        "question_source": getattr(req, 'question_source', "ORIGINAL"),
+        "status": "ACTIVE",
+        "created_at": now,
+        "updated_at": now
+    }
+
+    db.questions.insert_one(q_ta_doc)
+    db.questions.insert_one(q_en_doc)
+
+    groups = db.questions.distinct("question_group_id", {"past_year_paper_id": paper_id})
+    db.past_year_papers.update_one({"id": paper_id}, {"$set": {"question_count": len(groups)}})
 
     return {"message": "Dual-language questions added successfully", "question_group_id": next_grp_id}
 
@@ -337,97 +358,124 @@ def add_group2_question_to_past_year_paper(
 async def upload_pdf_for_past_year_paper(
     paper_id: int,
     file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    admin: User = Depends(get_admin_user)
+    db = Depends(get_db),
+    admin = Depends(get_admin_user)
 ):
-    paper = db.query(PastYearPaper).filter(PastYearPaper.id == paper_id).first()
-    if not paper:
+    paper_doc = db.past_year_papers.find_one({"id": paper_id})
+    if not paper_doc:
         raise HTTPException(status_code=404, detail="Past year paper not found")
+    paper = to_mongo_doc(paper_doc)
 
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
     contents = await file.read()
     raw_text = extract_text_from_pdf_bytes(contents)
-    exam_slug = paper.exam.slug if paper.exam else "tnpsc-group-4"
+
+    exam_doc = db.exams.find_one({"id": paper.exam_id}) if paper.exam_id else None
+    exam_slug = exam_doc["slug"] if exam_doc else "tnpsc-group-4"
     parsed_questions = parse_pdf_questions(raw_text, exam_slug)
 
-    # Get max group ID
-    max_grp = db.query(Question.question_group_id).order_by(Question.question_group_id.desc()).first()
-    base_grp_id = (max_grp[0] + 1) if max_grp else 1000
-
     added_count = 0
+    now = datetime.utcnow()
+
     for idx, pq in enumerate(parsed_questions, start=1):
-        grp_id = base_grp_id + idx
-        if exam_slug == "group2":
-            q_ta = Question(
-                past_year_paper_id=paper.id,
-                question_group_id=grp_id,
-                language="ta",
-                question_text=pq["question_text"],
-                option_a=pq["option_a"],
-                option_b=pq["option_b"],
-                option_c=pq["option_c"],
-                option_d=pq["option_d"],
-                correct_option=pq["correct_option"].upper(),
-                explanation=pq.get("explanation", ""),
-                question_order=idx,
-                source="PDF",
-                question_source="ORIGINAL"
-            )
-            q_en = Question(
-                past_year_paper_id=paper.id,
-                question_group_id=grp_id,
-                language="en",
-                question_text=f"[ENG] {pq['question_text']}",
-                option_a=f"[ENG] {pq['option_a']}",
-                option_b=f"[ENG] {pq['option_b']}",
-                option_c=f"[ENG] {pq['option_c']}",
-                option_d=f"[ENG] {pq['option_d']}",
-                correct_option=pq["correct_option"].upper(),
-                explanation=f"[ENG] {pq.get('explanation', '')}",
-                question_order=idx,
-                source="PDF",
-                question_source="ORIGINAL"
-            )
-            db.add(q_ta)
-            db.add(q_en)
+        grp_id = get_next_sequence(db, "question_group_id")
+        if exam_slug == "tnpsc-group-2":
+            q_ta_id = get_next_sequence(db, "question_id")
+            q_ta_doc = {
+                "id": q_ta_id,
+                "test_id": None,
+                "question_set_id": None,
+                "past_year_paper_id": paper.id,
+                "question_group_id": grp_id,
+                "language": "ta",
+                "question_text": pq["question_text"],
+                "option_a": pq["option_a"],
+                "option_b": pq["option_b"],
+                "option_c": pq["option_c"],
+                "option_d": pq["option_d"],
+                "correct_option": pq["correct_option"].upper(),
+                "explanation": pq.get("explanation", ""),
+                "question_order": idx,
+                "source": "PDF",
+                "question_source": "ORIGINAL",
+                "status": "ACTIVE",
+                "created_at": now,
+                "updated_at": now
+            }
+            q_en_id = get_next_sequence(db, "question_id")
+            q_en_doc = {
+                "id": q_en_id,
+                "test_id": None,
+                "question_set_id": None,
+                "past_year_paper_id": paper.id,
+                "question_group_id": grp_id,
+                "language": "en",
+                "question_text": f"[ENG] {pq['question_text']}",
+                "option_a": f"[ENG] {pq['option_a']}",
+                "option_b": f"[ENG] {pq['option_b']}",
+                "option_c": f"[ENG] {pq['option_c']}",
+                "option_d": f"[ENG] {pq['option_d']}",
+                "correct_option": pq["correct_option"].upper(),
+                "explanation": f"[ENG] {pq.get('explanation', '')}",
+                "question_order": idx,
+                "source": "PDF",
+                "question_source": "ORIGINAL",
+                "status": "ACTIVE",
+                "created_at": now,
+                "updated_at": now
+            }
+            db.questions.insert_one(q_ta_doc)
+            db.questions.insert_one(q_en_doc)
         else:
-            q_ta = Question(
-                past_year_paper_id=paper.id,
-                question_group_id=grp_id,
-                language="ta",
-                question_text=pq["question_text"],
-                option_a=pq["option_a"],
-                option_b=pq["option_b"],
-                option_c=pq["option_c"],
-                option_d=pq["option_d"],
-                correct_option=pq["correct_option"].upper(),
-                explanation=pq.get("explanation", ""),
-                question_order=idx,
-                source="PDF",
-                question_source="ORIGINAL"
-            )
-            db.add(q_ta)
+            q_ta_id = get_next_sequence(db, "question_id")
+            q_ta_doc = {
+                "id": q_ta_id,
+                "test_id": None,
+                "question_set_id": None,
+                "past_year_paper_id": paper.id,
+                "question_group_id": grp_id,
+                "language": "ta",
+                "question_text": pq["question_text"],
+                "option_a": pq["option_a"],
+                "option_b": pq["option_b"],
+                "option_c": pq["option_c"],
+                "option_d": pq["option_d"],
+                "correct_option": pq["correct_option"].upper(),
+                "explanation": pq.get("explanation", ""),
+                "question_order": idx,
+                "source": "PDF",
+                "question_source": "ORIGINAL",
+                "status": "ACTIVE",
+                "created_at": now,
+                "updated_at": now
+            }
+            db.questions.insert_one(q_ta_doc)
         added_count += 1
 
-    paper.status = PastYearPaperStatus.REVIEW
-    paper.question_count = added_count
-    paper.updated_at = datetime.utcnow()
-
-    # Audit log
-    audit = AuditLog(
-        user_id=admin.id,
-        action="UPLOAD_PAST_YEAR_PDF",
-        past_year_paper_id=paper.id,
-        details=f"Uploaded PDF '{file.filename}', parsed {added_count} questions. Status moved to REVIEW."
+    db.past_year_papers.update_one(
+        {"id": paper.id},
+        {"$set": {
+            "status": PastYearPaperStatus.REVIEW,
+            "question_count": added_count,
+            "updated_at": now
+        }}
     )
-    db.add(audit)
-    db.commit()
+
+    log_id = get_next_sequence(db, "audit_log_id")
+    db.audit_logs.insert_one({
+        "id": log_id,
+        "user_id": admin.id,
+        "action": "UPLOAD_PAST_YEAR_PDF",
+        "past_year_paper_id": paper.id,
+        "details": f"Uploaded PDF '{file.filename}', parsed {added_count} questions. Status moved to REVIEW.",
+        "created_at": now
+    })
 
     return {
         "message": f"Successfully extracted {added_count} questions from PDF.",
-        "status": paper.status.value,
+        "status": PastYearPaperStatus.REVIEW,
         "question_count": added_count
     }
 
@@ -435,50 +483,54 @@ async def upload_pdf_for_past_year_paper(
 def grant_access_to_past_year_paper(
     paper_id: int,
     req: AdminGrantAccessRequest,
-    db: Session = Depends(get_db),
-    admin: User = Depends(get_admin_user)
+    db = Depends(get_db),
+    admin = Depends(get_admin_user)
 ):
-    paper = db.query(PastYearPaper).filter(PastYearPaper.id == paper_id).first()
-    if not paper:
+    paper_doc = db.past_year_papers.find_one({"id": paper_id})
+    if not paper_doc:
         raise HTTPException(status_code=404, detail="Past year paper not found")
+    paper = to_mongo_doc(paper_doc)
 
-    target_user = db.query(User).filter(
-        (User.email == req.user_id_or_email) | (User.mobile == req.user_id_or_email)
-    ).first()
-    if not target_user and req.user_id_or_email.isdigit():
-        target_user = db.query(User).filter(User.id == int(req.user_id_or_email)).first()
+    target_user_doc = db.users.find_one({"$or": [{"email": req.user_id_or_email.lower()}, {"mobile": req.user_id_or_email}]})
+    if not target_user_doc and req.user_id_or_email.isdigit():
+        target_user_doc = db.users.find_one({"id": int(req.user_id_or_email)})
 
-    if not target_user:
+    if not target_user_doc:
         raise HTTPException(status_code=404, detail=f"Student '{req.user_id_or_email}' not found")
+    target_user = to_mongo_doc(target_user_doc)
 
-    existing = db.query(Payment).filter(
-        Payment.user_id == target_user.id,
-        Payment.past_year_paper_id == paper.id,
-        Payment.status == PaymentStatus.SUCCESS
-    ).first()
+    existing = db.payments.find_one({
+        "user_id": target_user.id,
+        "past_year_paper_id": paper.id,
+        "status": PaymentStatus.SUCCESS
+    })
 
     if existing:
         return {"message": f"Student '{target_user.name}' already has access to this past year paper."}
 
-    payment = Payment(
-        user_id=target_user.id,
-        past_year_paper_id=paper.id,
-        amount=0.0,
-        gateway_order_id=f"ADMIN_GRANT_{paper.id}_{target_user.id}",
-        gateway_payment_id=f"GRANT_PAY_{paper.id}_{target_user.id}",
-        status=PaymentStatus.SUCCESS,
-        payment_method=PaymentMethod.ADMIN_GRANTED
-    )
-    db.add(payment)
+    payment_id = get_next_sequence(db, "payment_id")
+    now = datetime.utcnow()
+    db.payments.insert_one({
+        "id": payment_id,
+        "user_id": target_user.id,
+        "test_id": None,
+        "past_year_paper_id": paper.id,
+        "amount": 0.0,
+        "gateway_order_id": f"ADMIN_GRANT_{paper.id}_{target_user.id}",
+        "gateway_payment_id": f"GRANT_PAY_{paper.id}_{target_user.id}",
+        "status": PaymentStatus.SUCCESS,
+        "payment_method": PaymentMethod.ADMIN_GRANTED,
+        "created_at": now
+    })
 
-    # Audit log
-    audit = AuditLog(
-        user_id=admin.id,
-        action="GRANT_PAST_YEAR_ACCESS",
-        past_year_paper_id=paper.id,
-        details=f"Admin Granted Access for Past Year Paper {paper.title} to student {target_user.email}"
-    )
-    db.add(audit)
-    db.commit()
+    log_id = get_next_sequence(db, "audit_log_id")
+    db.audit_logs.insert_one({
+        "id": log_id,
+        "user_id": admin.id,
+        "action": "GRANT_PAST_YEAR_ACCESS",
+        "past_year_paper_id": paper.id,
+        "details": f"Admin Granted Access for Past Year Paper {paper.title} to student {target_user.email}",
+        "created_at": now
+    })
 
     return {"message": f"Granted free access for '{paper.title}' to {target_user.name} ({target_user.email})"}

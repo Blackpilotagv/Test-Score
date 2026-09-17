@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: test_score_backend
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - PROJECT_NAME=Test-Score by MZAB Arcane
+      - API_V1_STR=/api
+      - MONGODB_URL=${MONGODB_URL:-mongodb+srv://tingletrade_db_user:h4cNffTmn5nrYON6@cluster0.ig4ngey.mongodb.net/test_score_db?appName=Cluster0}
+      - MONGODB_DB_NAME=${MONGODB_DB_NAME:-test_score_db}
+      - SECRET_KEY=${SECRET_KEY:-tnpsc-super-secret-key-mock-exam-2026}
+      - PAYMENT_MODE=${PAYMENT_MODE:-MOCK}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:5173,http://localhost:80}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: test_score_frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend

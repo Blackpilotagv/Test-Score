@@ -56,61 +56,61 @@ export const Result: React.FC = () => {
   const isDualLanguage = result.allowed_languages && result.allowed_languages.length > 1;
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-12 space-y-8">
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-12 space-y-6 sm:space-y-8">
       {/* Top Banner Card */}
-      <div className="bg-gradient-to-r from-sky-900 to-indigo-900 text-white rounded-2xl p-8 shadow-lg text-center space-y-4">
+      <div className="bg-gradient-to-r from-sky-900 to-indigo-900 text-white rounded-2xl p-6 sm:p-8 shadow-lg text-center space-y-3 sm:space-y-4">
         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 uppercase tracking-wider">
           <CheckCircle2 className="w-4 h-4" /> Assessment Completed
         </span>
-        <h1 className="text-3xl sm:text-4xl font-extrabold">{result.test_title}</h1>
-        <p className="text-sky-200 text-sm">{result.exam_name} Daily Mock Examination</p>
+        <h1 className="text-2xl sm:text-4xl font-extrabold leading-tight">{result.test_title}</h1>
+        <p className="text-sky-200 text-xs sm:text-sm">{result.exam_name} Assessment</p>
 
         {/* Score & Percentage Big Badges */}
-        <div className="flex flex-wrap justify-center items-center gap-6 pt-4">
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl px-8 py-4 border border-white/10">
-            <span className="text-xs text-sky-200 block uppercase font-medium">Your Score</span>
-            <span className="text-4xl font-black text-white">{result.score} <span className="text-xl font-normal text-sky-300">/ {result.total_questions}</span></span>
+        <div className="flex flex-row justify-center items-center gap-3 sm:gap-6 pt-2 sm:pt-4">
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl px-5 sm:px-8 py-3 sm:py-4 border border-white/10 flex-1 sm:flex-initial">
+            <span className="text-xxs sm:text-xs text-sky-200 block uppercase font-medium">Your Score</span>
+            <span className="text-2xl sm:text-4xl font-black text-white">{result.score} <span className="text-base sm:text-xl font-normal text-sky-300">/ {result.total_questions}</span></span>
           </div>
 
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl px-8 py-4 border border-white/10">
-            <span className="text-xs text-sky-200 block uppercase font-medium">Percentage</span>
-            <span className="text-4xl font-black text-emerald-400">{result.percentage}%</span>
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl px-5 sm:px-8 py-3 sm:py-4 border border-white/10 flex-1 sm:flex-initial">
+            <span className="text-xxs sm:text-xs text-sky-200 block uppercase font-medium">Percentage</span>
+            <span className="text-2xl sm:text-4xl font-black text-emerald-400">{result.percentage}%</span>
           </div>
         </div>
       </div>
 
       {/* Metrics Breakdown Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-        <div className="bg-white p-4 rounded-xl border border-gray-200 text-center shadow-xs">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 sm:gap-4">
+        <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-gray-200 text-center shadow-2xs">
           <span className="text-xs text-gray-500 block font-medium">Correct</span>
-          <span className="text-2xl font-black text-emerald-600 flex items-center justify-center gap-1 mt-1">
-            <CheckCircle2 className="w-5 h-5" /> {result.correct_answers}
+          <span className="text-xl sm:text-2xl font-black text-emerald-600 flex items-center justify-center gap-1 mt-1">
+            <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" /> {result.correct_answers}
           </span>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border border-gray-200 text-center shadow-xs">
+        <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-gray-200 text-center shadow-2xs">
           <span className="text-xs text-gray-500 block font-medium">Incorrect</span>
-          <span className="text-2xl font-black text-red-600 flex items-center justify-center gap-1 mt-1">
-            <XCircle className="w-5 h-5" /> {result.wrong_answers}
+          <span className="text-xl sm:text-2xl font-black text-red-600 flex items-center justify-center gap-1 mt-1">
+            <XCircle className="w-4 h-4 sm:w-5 sm:h-5" /> {result.wrong_answers}
           </span>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border border-gray-200 text-center shadow-xs">
+        <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-gray-200 text-center shadow-2xs">
           <span className="text-xs text-gray-500 block font-medium">Unanswered</span>
-          <span className="text-2xl font-black text-amber-600 flex items-center justify-center gap-1 mt-1">
-            <AlertCircle className="w-5 h-5" /> {result.unanswered}
+          <span className="text-xl sm:text-2xl font-black text-amber-600 flex items-center justify-center gap-1 mt-1">
+            <AlertCircle className="w-4 h-4 sm:w-5 sm:h-5" /> {result.unanswered}
           </span>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border border-gray-200 text-center shadow-xs">
+        <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-gray-200 text-center shadow-2xs">
           <span className="text-xs text-gray-500 block font-medium">Total Questions</span>
-          <span className="text-2xl font-black text-gray-800 mt-1">{result.total_questions}</span>
+          <span className="text-xl sm:text-2xl font-black text-gray-800 mt-1">{result.total_questions}</span>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border border-gray-200 text-center shadow-xs col-span-2 sm:col-span-1">
+        <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-gray-200 text-center shadow-2xs col-span-2 sm:col-span-1">
           <span className="text-xs text-gray-500 block font-medium">Time Taken</span>
-          <span className="text-2xl font-black text-sky-700 flex items-center justify-center gap-1 mt-1">
-            <Clock className="w-5 h-5" /> {result.time_taken || 'N/A'}
+          <span className="text-xl sm:text-2xl font-black text-sky-700 flex items-center justify-center gap-1 mt-1">
+            <Clock className="w-4 h-4 sm:w-5 sm:h-5" /> {result.time_taken || 'N/A'}
           </span>
         </div>
       </div>

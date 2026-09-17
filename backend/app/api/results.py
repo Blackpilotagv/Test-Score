@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 from typing import List, Optional
+from pymongo import DESCENDING, ASCENDING
 from app.database.session import get_db
-from app.models.models import User, TestAttempt, AttemptStatus, Question, Answer
+from app.models.models import AttemptStatus, to_mongo_doc
 from app.schemas.schemas import ResultOut, AttemptSummaryOut, QuestionReviewOut
 from app.api.deps import get_current_user
 from app.core.config import EXAM_CONFIG
@@ -11,21 +11,28 @@ router = APIRouter(prefix="/results", tags=["Results"])
 
 @router.get("", response_model=List[AttemptSummaryOut])
 def get_user_results(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
-    attempts = db.query(TestAttempt).filter(
-        TestAttempt.user_id == current_user.id,
-        TestAttempt.status == AttemptStatus.SUBMITTED
-    ).order_by(TestAttempt.submitted_at.desc()).all()
+    attempts_docs = list(db.test_attempts.find(
+        {"user_id": current_user.id, "status": AttemptStatus.SUBMITTED},
+        sort=[("submitted_at", DESCENDING)]
+    ))
 
     res = []
-    for a in attempts:
-        exam_name = a.test.exam.name if a.test and a.test.exam else ""
+    for a_doc in attempts_docs:
+        a = to_mongo_doc(a_doc)
+        test_doc = db.tests.find_one({"id": a.test_id}) if a.test_id else None
+        test_title = test_doc["title"] if test_doc else ""
+        exam_name = ""
+        if test_doc:
+            exam_doc = db.exams.find_one({"id": test_doc["exam_id"]})
+            exam_name = exam_doc["name"] if exam_doc else ""
+
         res.append(AttemptSummaryOut(
             attempt_id=a.id,
             test_id=a.test_id,
-            test_title=a.test.title if a.test else "",
+            test_title=test_title,
             exam_name=exam_name,
             submitted_at=a.submitted_at,
             score=a.score,
@@ -39,53 +46,68 @@ def get_user_results(
 def get_detailed_result(
     attempt_id: int,
     language: str = "ta",
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
-    attempt = db.query(TestAttempt).filter(TestAttempt.id == attempt_id).first()
-    if not attempt:
+    attempt_doc = db.test_attempts.find_one({"id": attempt_id})
+    if not attempt_doc:
         raise HTTPException(status_code=404, detail="Result not found")
+    attempt = to_mongo_doc(attempt_doc)
 
-    if attempt.user_id != current_user.id and current_user.role != "ADMIN":
+    role_str = current_user.role.value if hasattr(current_user.role, 'value') else str(current_user.role)
+    if attempt.user_id != current_user.id and role_str != "ADMIN":
         raise HTTPException(status_code=403, detail="Unauthorized access to test result")
 
     if attempt.status != AttemptStatus.SUBMITTED:
         raise HTTPException(status_code=400, detail="Test attempt is not yet submitted.")
 
-    test = attempt.test
-    exam_name = test.exam.name if test and test.exam else ""
-    exam_slug = test.exam.slug if test and test.exam else ""
+    test_doc = db.tests.find_one({"id": attempt.test_id})
+    test = to_mongo_doc(test_doc)
+
+    exam_doc = db.exams.find_one({"id": test.exam_id}) if test else None
+    exam_name = exam_doc["name"] if exam_doc else ""
+    exam_slug = exam_doc["slug"] if exam_doc else ""
+
     cfg = EXAM_CONFIG.get(exam_slug)
     allowed_langs = cfg["allowed_languages"] if cfg else ["ta"]
 
     if language not in allowed_langs:
         language = allowed_langs[0]
 
-    # Fetch questions for requested language
-    questions = db.query(Question).filter(
-        Question.test_id == test.id,
-        Question.language == language
-    ).order_by(Question.question_order.asc()).all()
+    if attempt.question_set_id:
+        q_docs = list(db.questions.find(
+            {"question_set_id": attempt.question_set_id, "language": language},
+            sort=[("question_order", ASCENDING)]
+        ))
+        if not q_docs:
+            q_docs = list(db.questions.find(
+                {"question_set_id": attempt.question_set_id, "language": "ta"},
+                sort=[("question_order", ASCENDING)]
+            ))
+    else:
+        q_docs = list(db.questions.find(
+            {"test_id": test.id, "language": language},
+            sort=[("question_order", ASCENDING)]
+        ))
+        if not q_docs:
+            q_docs = list(db.questions.find(
+                {"test_id": test.id, "language": "ta"},
+                sort=[("question_order", ASCENDING)]
+            ))
 
-    # Fallback to Tamil if requested language questions aren't present
-    if not questions:
-        questions = db.query(Question).filter(
-            Question.test_id == test.id,
-            Question.language == "ta"
-        ).order_by(Question.question_order.asc()).all()
+    questions = [to_mongo_doc(q) for q in q_docs]
 
-    # Fetch student answers
-    user_answers = db.query(Answer).filter(Answer.attempt_id == attempt.id).all()
-    answers_map = {ans.question_group_id: ans for ans in user_answers}
+    user_answers_docs = list(db.answers.find({"attempt_id": attempt.id}))
+    answers_map = {ans["question_group_id"]: to_mongo_doc(ans) for ans in user_answers_docs}
 
     reviews = []
     for q in questions:
         ans = answers_map.get(q.question_group_id)
         student_ans = ans.selected_option if ans else None
-        
+
         if not student_ans:
             q_status = "Not Answered"
-        elif student_ans.upper() == q.correct_option.upper():
+        elif str(student_ans).upper() == str(q.correct_option).upper():
             q_status = "Correct"
         else:
             q_status = "Incorrect"

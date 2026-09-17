@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
 from typing import List
+from pymongo import DESCENDING
 from app.database.session import get_db
-from app.models.models import User, Test, Payment, PaymentStatus, PastYearPaper
+from app.models.models import PaymentStatus, to_mongo_doc
 from app.schemas.schemas import CreateOrderRequest, ProcessMockPaymentRequest, PaymentOut
 from app.api.deps import get_current_user
 from app.services.payment_service import get_payment_service
@@ -12,39 +12,35 @@ router = APIRouter(prefix="/payments", tags=["Payments"])
 @router.post("/create-order")
 def create_payment_order(
     req: CreateOrderRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
     target_price = 0.0
     test_id = None
     past_year_paper_id = None
 
     if req.past_year_paper_id:
-        paper = db.query(PastYearPaper).filter(PastYearPaper.id == req.past_year_paper_id).first()
+        paper = db.past_year_papers.find_one({"id": req.past_year_paper_id})
         if not paper:
             raise HTTPException(status_code=404, detail="Past year paper not found")
-        target_price = paper.price
-        past_year_paper_id = paper.id
+        target_price = paper["price"]
+        past_year_paper_id = paper["id"]
     elif req.test_id:
-        test = db.query(Test).filter(Test.id == req.test_id).first()
+        test = db.tests.find_one({"id": req.test_id})
         if not test:
             raise HTTPException(status_code=404, detail="Test not found")
-        target_price = test.price
-        test_id = test.id
+        target_price = test["price"]
+        test_id = test["id"]
     else:
         raise HTTPException(status_code=400, detail="Must specify test_id or past_year_paper_id")
 
-    # Check if already purchased
-    query = db.query(Payment).filter(
-        Payment.user_id == current_user.id,
-        Payment.status == PaymentStatus.SUCCESS
-    )
+    query_filter = {"user_id": current_user.id, "status": PaymentStatus.SUCCESS}
     if past_year_paper_id:
-        query = query.filter(Payment.past_year_paper_id == past_year_paper_id)
+        query_filter["past_year_paper_id"] = past_year_paper_id
     else:
-        query = query.filter(Payment.test_id == test_id)
+        query_filter["test_id"] = test_id
 
-    existing_success = query.first()
+    existing_success = db.payments.find_one(query_filter)
 
     if existing_success:
         return {
@@ -67,8 +63,8 @@ def create_payment_order(
 @router.post("/process-mock")
 def process_mock_payment(
     req: ProcessMockPaymentRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
     """
     Development Mode Mock Gateway Callback Simulator.
@@ -81,8 +77,9 @@ def process_mock_payment(
             order_id=req.order_id,
             success=req.success
         )
+        status_val = payment.status.value if hasattr(payment.status, 'value') else str(payment.status)
         return {
-            "status": payment.status.value,
+            "status": status_val,
             "payment_id": payment.gateway_payment_id,
             "test_id": payment.test_id,
             "past_year_paper_id": payment.past_year_paper_id,
@@ -93,17 +90,21 @@ def process_mock_payment(
 
 @router.get("/history", response_model=List[PaymentOut])
 def get_payment_history(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
-    payments = db.query(Payment).filter(Payment.user_id == current_user.id).order_by(Payment.id.desc()).all()
+    payment_docs = list(db.payments.find({"user_id": current_user.id}, sort=[("id", DESCENDING)]))
     out = []
-    for p in payments:
+    for p_doc in payment_docs:
+        p = to_mongo_doc(p_doc)
         title = ""
-        if p.past_year_paper:
-            title = p.past_year_paper.title
-        elif p.test:
-            title = p.test.title
+        if p.past_year_paper_id:
+            paper_doc = db.past_year_papers.find_one({"id": p.past_year_paper_id})
+            title = paper_doc["title"] if paper_doc else ""
+        elif p.test_id:
+            test_doc = db.tests.find_one({"id": p.test_id})
+            title = test_doc["title"] if test_doc else ""
+
         out.append(PaymentOut(
             id=p.id,
             user_id=p.user_id,

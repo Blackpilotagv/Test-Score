@@ -44,7 +44,7 @@ export const QuestionPalette: React.FC<QuestionPaletteProps> = ({
       </div>
 
       {/* Grid of Question Numbers */}
-      <div className="grid grid-cols-5 sm:grid-cols-6 md:grid-cols-5 gap-2 max-h-64 overflow-y-auto pr-1">
+      <div className="grid grid-cols-6 sm:grid-cols-6 md:grid-cols-5 gap-2 max-h-72 overflow-y-auto pr-1">
         {Array.from({ length: totalQuestions }).map((_, idx) => {
           const qId = questionIds[idx];
           const isAnswered = qId !== undefined && savedAnswers[qId] !== undefined && savedAnswers[qId] !== null;
@@ -52,7 +52,7 @@ export const QuestionPalette: React.FC<QuestionPaletteProps> = ({
 
           let btnStyle = 'bg-white text-gray-700 border-gray-300 hover:border-sky-500';
           if (isCurrent) {
-            btnStyle = 'bg-sky-600 text-white font-bold ring-2 ring-sky-300 border-sky-600';
+            btnStyle = 'bg-sky-600 text-white font-bold ring-2 ring-sky-300 border-sky-600 scale-105';
           } else if (isAnswered) {
             btnStyle = 'bg-emerald-600 text-white font-semibold border-emerald-600';
           }
@@ -61,7 +61,7 @@ export const QuestionPalette: React.FC<QuestionPaletteProps> = ({
             <button
               key={idx}
               onClick={() => onSelectQuestion(idx)}
-              className={`w-9 h-9 rounded-lg border text-sm flex items-center justify-center transition-all shadow-sm ${btnStyle}`}
+              className={`h-10 text-xs font-bold rounded-xl border flex items-center justify-center transition-all shadow-2xs active:scale-95 touch-manipulation ${btnStyle}`}
               title={`Question ${idx + 1}: ${isAnswered ? 'Answered' : 'Unanswered'}`}
             >
               {idx + 1}

@@ -1,49 +1,63 @@
 import os
 import sys
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from app.database.session import SessionLocal, Base, engine
-from app.models.models import User, UserRole, UserStatus, Exam, ExamStatus, Test, TestStatus, Question, QuestionSet, QuestionSetStatus
+from app.database.session import get_mongo_db, get_next_sequence
+from app.models.models import UserRole, UserStatus, ExamStatus, TestStatus, QuestionSetStatus, PastYearPaperStatus
 from app.core.security import get_password_hash
 from app.services.scheduler_service import get_current_ist_date, get_ist_12pm_utc
 
 def seed_db():
-    print("Re-creating database tables for updated schema...")
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
+    print("Clearing MongoDB collections for fresh seeding...")
+    db = get_mongo_db()
+
+    collections = [
+        "users", "exams", "tests", "question_sets", "questions",
+        "past_year_papers", "payments", "test_attempts", "answers",
+        "audit_logs", "counters"
+    ]
+    for c in collections:
+        db[c].drop()
 
     current_ist = get_current_ist_date()
     today_str = current_ist.strftime("%Y-%m-%d")
     tomorrow_str = (current_ist + timedelta(days=1)).strftime("%Y-%m-%d")
+    now = datetime.utcnow()
 
     try:
         # 1. Seed Users
-        admin_user = User(
-            name="TNPSC Administrator",
-            email="admin@tnpsc.com",
-            mobile="9876543210",
-            password_hash=get_password_hash("admin123"),
-            role=UserRole.ADMIN,
-            status=UserStatus.ACTIVE
-        )
-        db.add(admin_user)
+        admin_id = get_next_sequence(db, "user_id")
+        admin_user = {
+            "id": admin_id,
+            "name": "TNPSC Administrator",
+            "email": "admin@tnpsc.com",
+            "mobile": "9876543210",
+            "password_hash": get_password_hash("admin123"),
+            "role": UserRole.ADMIN,
+            "status": UserStatus.ACTIVE,
+            "created_at": now,
+            "updated_at": now
+        }
+        db.users.insert_one(admin_user)
 
-        student_user = User(
-            name="Raja Guru",
-            email="student@tnpsc.com",
-            mobile="9876543211",
-            password_hash=get_password_hash("student123"),
-            role=UserRole.STUDENT,
-            status=UserStatus.ACTIVE
-        )
-        db.add(student_user)
-        db.commit()
+        student_id = get_next_sequence(db, "user_id")
+        student_user = {
+            "id": student_id,
+            "name": "Raja Guru",
+            "email": "student@tnpsc.com",
+            "mobile": "9876543211",
+            "password_hash": get_password_hash("student123"),
+            "role": UserRole.STUDENT,
+            "status": UserStatus.ACTIVE,
+            "created_at": now,
+            "updated_at": now
+        }
+        db.users.insert_one(student_user)
         print("Seeded Admin & Student users.")
 
-        # 2. Seed Exams (Strictly 3 categories: Group 1, Group 2, Group 4)
+        # 2. Seed Exams
         exam_data = [
             {
                 "name": "TNPSC Group 1",
@@ -66,65 +80,79 @@ def seed_db():
                 "slug": "tnpsc-group-4",
                 "description": "VAO, Junior Assistant, Typist & Steno-Typist Examinations (Tamil Medium).",
                 "price": 29.0,
+                "language_mode": "TA",
                 "status": ExamStatus.ACTIVE
             }
         ]
 
         exams_by_slug = {}
         for edata in exam_data:
-            e = Exam(**edata)
-            db.add(e)
-            db.commit()
-            db.refresh(e)
-            exams_by_slug[edata["slug"]] = e
-            print(f"Seeded Exam: {e.name} (Language Mode: {e.language_mode})")
+            e_id = get_next_sequence(db, "exam_id")
+            doc = {
+                "id": e_id,
+                **edata,
+                "created_at": now,
+                "updated_at": now
+            }
+            db.exams.insert_one(doc)
+            exams_by_slug[edata["slug"]] = doc
+            print(f"Seeded Exam: {doc['name']} (ID: {e_id})")
 
-        # 3. Seed Group 4 Daily Assessment #24 (Tamil Only)
+        # 3. Seed Group 4 Daily Assessment #24
         group4_exam = exams_by_slug["tnpsc-group-4"]
-        test_g4 = Test(
-            exam_id=group4_exam.id,
-            title="Daily Assessment #24",
-            description="Comprehensive Daily Mock Assessment covering Tamil Literature, Indian Polity & History.",
-            test_date=today_str,
-            duration_minutes=30,
-            question_count=5,
-            price=29.0,
-            status=TestStatus.PUBLISHED
-        )
-        db.add(test_g4)
-        db.commit()
-        db.refresh(test_g4)
+        test_g4_id = get_next_sequence(db, "test_id")
+        test_g4 = {
+            "id": test_g4_id,
+            "exam_id": group4_exam["id"],
+            "title": "Daily Assessment #24",
+            "description": "Comprehensive Daily Mock Assessment covering Tamil Literature, Indian Polity & History.",
+            "test_date": today_str,
+            "duration_minutes": 30,
+            "question_count": 5,
+            "price": 29.0,
+            "status": TestStatus.PUBLISHED,
+            "created_at": now,
+            "updated_at": now
+        }
+        db.tests.insert_one(test_g4)
 
-        # Create QuestionSet for Today (ACTIVE)
-        qs_g4_today = QuestionSet(
-            exam_id=group4_exam.id,
-            test_id=test_g4.id,
-            title=f"Group 4 Daily Test - {today_str}",
-            schedule_date=today_str,
-            publish_at=get_ist_12pm_utc(current_ist),
-            expire_at=get_ist_12pm_utc(current_ist + timedelta(days=1)),
-            status=QuestionSetStatus.ACTIVE,
-            question_count=5,
-            created_by=admin_user.id
-        )
-        db.add(qs_g4_today)
+        qs_g4_today_id = get_next_sequence(db, "question_set_id")
+        qs_g4_today = {
+            "id": qs_g4_today_id,
+            "exam_id": group4_exam["id"],
+            "test_id": test_g4_id,
+            "title": f"Group 4 Daily Test - {today_str}",
+            "schedule_date": today_str,
+            "publish_at": get_ist_12pm_utc(current_ist),
+            "published_at": now,
+            "expire_at": get_ist_12pm_utc(current_ist + timedelta(days=1)),
+            "expired_at": None,
+            "status": QuestionSetStatus.ACTIVE,
+            "question_count": 5,
+            "created_by": admin_id,
+            "created_at": now,
+            "updated_at": now
+        }
+        db.question_sets.insert_one(qs_g4_today)
 
-        # Create QuestionSet for Tomorrow (SCHEDULED)
-        qs_g4_tomorrow = QuestionSet(
-            exam_id=group4_exam.id,
-            test_id=test_g4.id,
-            title=f"Group 4 Daily Test - {tomorrow_str}",
-            schedule_date=tomorrow_str,
-            publish_at=get_ist_12pm_utc(current_ist + timedelta(days=1)),
-            expire_at=get_ist_12pm_utc(current_ist + timedelta(days=2)),
-            status=QuestionSetStatus.SCHEDULED,
-            question_count=5,
-            created_by=admin_user.id
-        )
-        db.add(qs_g4_tomorrow)
-        db.commit()
-        db.refresh(qs_g4_today)
-        db.refresh(qs_g4_tomorrow)
+        qs_g4_tomorrow_id = get_next_sequence(db, "question_set_id")
+        qs_g4_tomorrow = {
+            "id": qs_g4_tomorrow_id,
+            "exam_id": group4_exam["id"],
+            "test_id": test_g4_id,
+            "title": f"Group 4 Daily Test - {tomorrow_str}",
+            "schedule_date": tomorrow_str,
+            "publish_at": get_ist_12pm_utc(current_ist + timedelta(days=1)),
+            "published_at": None,
+            "expire_at": get_ist_12pm_utc(current_ist + timedelta(days=2)),
+            "expired_at": None,
+            "status": QuestionSetStatus.SCHEDULED,
+            "question_count": 5,
+            "created_by": admin_id,
+            "created_at": now,
+            "updated_at": now
+        }
+        db.question_sets.insert_one(qs_g4_tomorrow)
 
         g4_questions_ta = [
             {
@@ -190,59 +218,70 @@ def seed_db():
         ]
 
         for qdata in g4_questions_ta:
-            db.add(Question(test_id=test_g4.id, question_set_id=qs_g4_today.id, source="MANUAL", status="ACTIVE", **qdata))
-            db.add(Question(test_id=test_g4.id, question_set_id=qs_g4_tomorrow.id, source="MANUAL", status="ACTIVE", **qdata))
+            q_id1 = get_next_sequence(db, "question_id")
+            db.questions.insert_one({"id": q_id1, "test_id": test_g4_id, "question_set_id": qs_g4_today_id, "past_year_paper_id": None, "source": "MANUAL", "question_source": "ORIGINAL", "status": "ACTIVE", "created_at": now, "updated_at": now, **qdata})
+            q_id2 = get_next_sequence(db, "question_id")
+            db.questions.insert_one({"id": q_id2, "test_id": test_g4_id, "question_set_id": qs_g4_tomorrow_id, "past_year_paper_id": None, "source": "MANUAL", "question_source": "ORIGINAL", "status": "ACTIVE", "created_at": now, "updated_at": now, **qdata})
 
-        db.commit()
-        print("Seeded Group 4 Questions for Today's ACTIVE set and Tomorrow's SCHEDULED set.")
+        print("Seeded Group 4 Questions.")
 
-        # 4. Seed Group 2 Daily Assessment #08 (Dual Language: Tamil + English)
+        # 4. Seed Group 2 Daily Assessment #08 (Dual Language)
         group2_exam = exams_by_slug["tnpsc-group-2"]
-        test_g2 = Test(
-            exam_id=group2_exam.id,
-            title="Daily Assessment #08",
-            description="Bilingual Mock Assessment covering Indian Economy & Science (Tamil & English Dual Mode).",
-            test_date=today_str,
-            duration_minutes=45,
-            question_count=3,
-            price=49.0,
-            status=TestStatus.PUBLISHED
-        )
-        db.add(test_g2)
-        db.commit()
-        db.refresh(test_g2)
+        test_g2_id = get_next_sequence(db, "test_id")
+        test_g2 = {
+            "id": test_g2_id,
+            "exam_id": group2_exam["id"],
+            "title": "Daily Assessment #08",
+            "description": "Bilingual Mock Assessment covering Indian Economy & Science (Tamil & English Dual Mode).",
+            "test_date": today_str,
+            "duration_minutes": 45,
+            "question_count": 3,
+            "price": 49.0,
+            "status": TestStatus.PUBLISHED,
+            "created_at": now,
+            "updated_at": now
+        }
+        db.tests.insert_one(test_g2)
 
-        qs_g2_today = QuestionSet(
-            exam_id=group2_exam.id,
-            test_id=test_g2.id,
-            title=f"Group 2 Dual Daily Set - {today_str}",
-            schedule_date=today_str,
-            publish_at=get_ist_12pm_utc(current_ist),
-            expire_at=get_ist_12pm_utc(current_ist + timedelta(days=1)),
-            status=QuestionSetStatus.ACTIVE,
-            question_count=3,
-            created_by=admin_user.id
-        )
-        db.add(qs_g2_today)
+        qs_g2_today_id = get_next_sequence(db, "question_set_id")
+        qs_g2_today = {
+            "id": qs_g2_today_id,
+            "exam_id": group2_exam["id"],
+            "test_id": test_g2_id,
+            "title": f"Group 2 Dual Daily Set - {today_str}",
+            "schedule_date": today_str,
+            "publish_at": get_ist_12pm_utc(current_ist),
+            "published_at": now,
+            "expire_at": get_ist_12pm_utc(current_ist + timedelta(days=1)),
+            "expired_at": None,
+            "status": QuestionSetStatus.ACTIVE,
+            "question_count": 3,
+            "created_by": admin_id,
+            "created_at": now,
+            "updated_at": now
+        }
+        db.question_sets.insert_one(qs_g2_today)
 
-        qs_g2_tomorrow = QuestionSet(
-            exam_id=group2_exam.id,
-            test_id=test_g2.id,
-            title=f"Group 2 Dual Daily Set - {tomorrow_str}",
-            schedule_date=tomorrow_str,
-            publish_at=get_ist_12pm_utc(current_ist + timedelta(days=1)),
-            expire_at=get_ist_12pm_utc(current_ist + timedelta(days=2)),
-            status=QuestionSetStatus.SCHEDULED,
-            question_count=3,
-            created_by=admin_user.id
-        )
-        db.add(qs_g2_tomorrow)
-        db.commit()
-        db.refresh(qs_g2_today)
-        db.refresh(qs_g2_tomorrow)
+        qs_g2_tomorrow_id = get_next_sequence(db, "question_set_id")
+        qs_g2_tomorrow = {
+            "id": qs_g2_tomorrow_id,
+            "exam_id": group2_exam["id"],
+            "test_id": test_g2_id,
+            "title": f"Group 2 Dual Daily Set - {tomorrow_str}",
+            "schedule_date": tomorrow_str,
+            "publish_at": get_ist_12pm_utc(current_ist + timedelta(days=1)),
+            "published_at": None,
+            "expire_at": get_ist_12pm_utc(current_ist + timedelta(days=2)),
+            "expired_at": None,
+            "status": QuestionSetStatus.SCHEDULED,
+            "question_count": 3,
+            "created_by": admin_id,
+            "created_at": now,
+            "updated_at": now
+        }
+        db.question_sets.insert_one(qs_g2_tomorrow)
 
         g2_questions_dual = [
-            # Question 1 (Pair: Tamil & English share question_group_id=201)
             {
                 "question_group_id": 201,
                 "language": "ta",
@@ -267,7 +306,6 @@ def seed_db():
                 "explanation": "The Reserve Bank of India was established on April 1, 1935 under the Reserve Bank of India Act.",
                 "question_order": 1
             },
-            # Question 2 (Pair: Tamil & English share question_group_id=202)
             {
                 "question_group_id": 202,
                 "language": "ta",
@@ -292,7 +330,6 @@ def seed_db():
                 "explanation": "Plants release Oxygen gas as a byproduct during photosynthesis.",
                 "question_order": 2
             },
-            # Question 3 (Pair: Tamil & English share question_group_id=203)
             {
                 "question_group_id": 203,
                 "language": "ta",
@@ -320,56 +357,68 @@ def seed_db():
         ]
 
         for qdata in g2_questions_dual:
-            db.add(Question(test_id=test_g2.id, question_set_id=qs_g2_today.id, source="MANUAL", status="ACTIVE", **qdata))
-            db.add(Question(test_id=test_g2.id, question_set_id=qs_g2_tomorrow.id, source="MANUAL", status="ACTIVE", **qdata))
+            q_id1 = get_next_sequence(db, "question_id")
+            db.questions.insert_one({"id": q_id1, "test_id": test_g2_id, "question_set_id": qs_g2_today_id, "past_year_paper_id": None, "source": "MANUAL", "question_source": "ORIGINAL", "status": "ACTIVE", "created_at": now, "updated_at": now, **qdata})
+            q_id2 = get_next_sequence(db, "question_id")
+            db.questions.insert_one({"id": q_id2, "test_id": test_g2_id, "question_set_id": qs_g2_tomorrow_id, "past_year_paper_id": None, "source": "MANUAL", "question_source": "ORIGINAL", "status": "ACTIVE", "created_at": now, "updated_at": now, **qdata})
 
-        db.commit()
-        print("Seeded Group 2 Dual Language Question Sets (Tamil & English paired).")
+        print("Seeded Group 2 Dual Language Questions.")
 
-        # 5. Seed Group 1 Daily Assessment #12 (Tamil Only)
+        # 5. Seed Group 1 Daily Assessment #12
         group1_exam = exams_by_slug["tnpsc-group-1"]
-        test_g1 = Test(
-            exam_id=group1_exam.id,
-            title="Daily Assessment #12",
-            description="Premier Civil Services Daily Assessment on Polity & Governance.",
-            test_date=today_str,
-            duration_minutes=30,
-            question_count=2,
-            price=99.0,
-            status=TestStatus.PUBLISHED
-        )
-        db.add(test_g1)
-        db.commit()
-        db.refresh(test_g1)
+        test_g1_id = get_next_sequence(db, "test_id")
+        test_g1 = {
+            "id": test_g1_id,
+            "exam_id": group1_exam["id"],
+            "title": "Daily Assessment #12",
+            "description": "Premier Civil Services Daily Assessment on Polity & Governance.",
+            "test_date": today_str,
+            "duration_minutes": 30,
+            "question_count": 2,
+            "price": 99.0,
+            "status": TestStatus.PUBLISHED,
+            "created_at": now,
+            "updated_at": now
+        }
+        db.tests.insert_one(test_g1)
 
-        qs_g1_today = QuestionSet(
-            exam_id=group1_exam.id,
-            test_id=test_g1.id,
-            title=f"Group 1 Daily Set - {today_str}",
-            schedule_date=today_str,
-            publish_at=get_ist_12pm_utc(current_ist),
-            expire_at=get_ist_12pm_utc(current_ist + timedelta(days=1)),
-            status=QuestionSetStatus.ACTIVE,
-            question_count=2,
-            created_by=admin_user.id
-        )
-        db.add(qs_g1_today)
+        qs_g1_today_id = get_next_sequence(db, "question_set_id")
+        qs_g1_today = {
+            "id": qs_g1_today_id,
+            "exam_id": group1_exam["id"],
+            "test_id": test_g1_id,
+            "title": f"Group 1 Daily Set - {today_str}",
+            "schedule_date": today_str,
+            "publish_at": get_ist_12pm_utc(current_ist),
+            "published_at": now,
+            "expire_at": get_ist_12pm_utc(current_ist + timedelta(days=1)),
+            "expired_at": None,
+            "status": QuestionSetStatus.ACTIVE,
+            "question_count": 2,
+            "created_by": admin_id,
+            "created_at": now,
+            "updated_at": now
+        }
+        db.question_sets.insert_one(qs_g1_today)
 
-        qs_g1_tomorrow = QuestionSet(
-            exam_id=group1_exam.id,
-            test_id=test_g1.id,
-            title=f"Group 1 Daily Set - {tomorrow_str}",
-            schedule_date=tomorrow_str,
-            publish_at=get_ist_12pm_utc(current_ist + timedelta(days=1)),
-            expire_at=get_ist_12pm_utc(current_ist + timedelta(days=2)),
-            status=QuestionSetStatus.SCHEDULED,
-            question_count=2,
-            created_by=admin_user.id
-        )
-        db.add(qs_g1_tomorrow)
-        db.commit()
-        db.refresh(qs_g1_today)
-        db.refresh(qs_g1_tomorrow)
+        qs_g1_tomorrow_id = get_next_sequence(db, "question_set_id")
+        qs_g1_tomorrow = {
+            "id": qs_g1_tomorrow_id,
+            "exam_id": group1_exam["id"],
+            "test_id": test_g1_id,
+            "title": f"Group 1 Daily Set - {tomorrow_str}",
+            "schedule_date": tomorrow_str,
+            "publish_at": get_ist_12pm_utc(current_ist + timedelta(days=1)),
+            "published_at": None,
+            "expire_at": get_ist_12pm_utc(current_ist + timedelta(days=2)),
+            "expired_at": None,
+            "status": QuestionSetStatus.SCHEDULED,
+            "question_count": 2,
+            "created_by": admin_id,
+            "created_at": now,
+            "updated_at": now
+        }
+        db.question_sets.insert_one(qs_g1_tomorrow)
 
         g1_questions_ta = [
             {
@@ -399,147 +448,174 @@ def seed_db():
         ]
 
         for qdata in g1_questions_ta:
-            db.add(Question(test_id=test_g1.id, question_set_id=qs_g1_today.id, source="MANUAL", status="ACTIVE", **qdata))
-            db.add(Question(test_id=test_g1.id, question_set_id=qs_g1_tomorrow.id, source="MANUAL", status="ACTIVE", **qdata))
+            q_id1 = get_next_sequence(db, "question_id")
+            db.questions.insert_one({"id": q_id1, "test_id": test_g1_id, "question_set_id": qs_g1_today_id, "past_year_paper_id": None, "source": "MANUAL", "question_source": "ORIGINAL", "status": "ACTIVE", "created_at": now, "updated_at": now, **qdata})
+            q_id2 = get_next_sequence(db, "question_id")
+            db.questions.insert_one({"id": q_id2, "test_id": test_g1_id, "question_set_id": qs_g1_tomorrow_id, "past_year_paper_id": None, "source": "MANUAL", "question_source": "ORIGINAL", "status": "ACTIVE", "created_at": now, "updated_at": now, **qdata})
 
-        db.commit()
-        print("Seeded Group 1 Question Sets for Today's ACTIVE set and Tomorrow's SCHEDULED set.")
+        print("Seeded Group 1 Question Sets.")
 
-        # Seed Past Year Question Papers (2025-2021)
-        from app.models.models import PastYearPaper, PastYearPaperStatus
-
+        # 6. Seed Past Year Papers (2025–2021)
         years = [2025, 2024, 2023, 2022, 2021]
         for y in years:
-            # Group 4 Past Paper
-            p_g4 = PastYearPaper(
-                exam_id=group4_exam.id,
-                year=y,
-                title=f"TNPSC Group 4 Original Paper {y}",
-                description=f"Official TNPSC Group 4 General Studies & Tamil Language Question Paper ({y}).",
-                duration_minutes=180,
-                question_count=200,
-                marks_per_question=1.5,
-                negative_mark=0.0,
-                price=0.0,
-                status=PastYearPaperStatus.PUBLISHED,
-                created_by=admin_user.id
-            )
-            db.add(p_g4)
-            db.commit()
-            db.refresh(p_g4)
+            # Group 4 Paper
+            p_g4_id = get_next_sequence(db, "past_year_paper_id")
+            p_g4 = {
+                "id": p_g4_id,
+                "exam_id": group4_exam["id"],
+                "year": y,
+                "title": f"TNPSC Group 4 Original Paper {y}",
+                "description": f"Official TNPSC Group 4 General Studies & Tamil Language Question Paper ({y}).",
+                "duration_minutes": 180,
+                "question_count": 200,
+                "marks_per_question": 1.5,
+                "negative_mark": 0.0,
+                "price": 0.0,
+                "status": PastYearPaperStatus.PUBLISHED,
+                "created_by": admin_id,
+                "created_at": now,
+                "updated_at": now
+            }
+            db.past_year_papers.insert_one(p_g4)
 
-            # Sample question for G4
-            db.add(Question(
-                past_year_paper_id=p_g4.id,
-                question_group_id=5000 + y,
-                language="ta",
-                question_text=f"TNPSC Group 4 ({y}) மாதிரி கேள்வி: திருக்குறளில் உள்ள அதிகாரங்களின் எண்ணிக்கை எத்தனை?",
-                option_a="133",
-                option_b="108",
-                option_c="120",
-                option_d="150",
-                correct_option="A",
-                explanation="திருக்குறள் 133 அதிகாரங்களையும் 1330 குறட்பாக்களையும் கொண்டுள்ளது.",
-                question_order=1,
-                source="MANUAL",
-                question_source="ORIGINAL"
-            ))
+            q_id_g4 = get_next_sequence(db, "question_id")
+            db.questions.insert_one({
+                "id": q_id_g4,
+                "test_id": None,
+                "question_set_id": None,
+                "past_year_paper_id": p_g4_id,
+                "question_group_id": 5000 + y,
+                "language": "ta",
+                "question_text": f"TNPSC Group 4 ({y}) மாதிரி கேள்வி: திருக்குறளில் உள்ள அதிகாரங்களின் எண்ணிக்கை எத்தனை?",
+                "option_a": "133",
+                "option_b": "108",
+                "option_c": "120",
+                "option_d": "150",
+                "correct_option": "A",
+                "explanation": "திருக்குறள் 133 அதிகாரங்களையும் 1330 குறட்பாக்களையும் கொண்டுள்ளது.",
+                "question_order": 1,
+                "source": "MANUAL",
+                "question_source": "ORIGINAL",
+                "status": "ACTIVE",
+                "created_at": now,
+                "updated_at": now
+            })
 
-            # Group 2 Past Paper (Dual language)
-            p_g2 = PastYearPaper(
-                exam_id=group2_exam.id,
-                year=y,
-                title=f"TNPSC Group 2 & 2A Preliminary Original Paper {y}",
-                description=f"Official TNPSC Group 2 Preliminary Examination Question Paper in Tamil & English ({y}).",
-                duration_minutes=180,
-                question_count=200,
-                marks_per_question=1.5,
-                negative_mark=0.0,
-                price=0.0 if y != 2025 else 49.0,  # 2025 paper premium, others free
-                status=PastYearPaperStatus.PUBLISHED,
-                created_by=admin_user.id
-            )
-            db.add(p_g2)
-            db.commit()
-            db.refresh(p_g2)
+            # Group 2 Paper
+            p_g2_id = get_next_sequence(db, "past_year_paper_id")
+            p_g2 = {
+                "id": p_g2_id,
+                "exam_id": group2_exam["id"],
+                "year": y,
+                "title": f"TNPSC Group 2 & 2A Preliminary Original Paper {y}",
+                "description": f"Official TNPSC Group 2 Preliminary Examination Question Paper in Tamil & English ({y}).",
+                "duration_minutes": 180,
+                "question_count": 200,
+                "marks_per_question": 1.5,
+                "negative_mark": 0.0,
+                "price": 0.0 if y != 2025 else 49.0,
+                "status": PastYearPaperStatus.PUBLISHED,
+                "created_by": admin_id,
+                "created_at": now,
+                "updated_at": now
+            }
+            db.past_year_papers.insert_one(p_g2)
 
             grp_id_g2 = 6000 + y
-            db.add(Question(
-                past_year_paper_id=p_g2.id,
-                question_group_id=grp_id_g2,
-                language="ta",
-                question_text=f"TNPSC Group 2 ({y}): இந்திய அரசியலமைப்பு சாசனம் ஏற்றுக்கொள்ளப்பட்ட நாள் எது?",
-                option_a="நவம்பர் 26, 1949",
-                option_b="ஜனவரி 26, 1950",
-                option_c="ஆகஸ்ட் 15, 1947",
-                option_d="ஜனவரி 30, 1948",
-                correct_option="A",
-                explanation="இந்திய அரசியலமைப்பு சாசனம் 1949 நவம்பர் 26 அன்று ஏற்றுக்கொள்ளப்பட்டது.",
-                question_order=1,
-                source="MANUAL",
-                question_source="ORIGINAL"
-            ))
-            db.add(Question(
-                past_year_paper_id=p_g2.id,
-                question_group_id=grp_id_g2,
-                language="en",
-                question_text=f"TNPSC Group 2 ({y}): When was the Constitution of India adopted by the Constituent Assembly?",
-                option_a="November 26, 1949",
-                option_b="January 26, 1950",
-                option_c="August 15, 1947",
-                option_d="January 30, 1948",
-                correct_option="A",
-                explanation="The Constitution of India was adopted on 26 November 1949 and came into effect on 26 January 1950.",
-                question_order=1,
-                source="MANUAL",
-                question_source="ORIGINAL"
-            ))
+            q_id_g2_ta = get_next_sequence(db, "question_id")
+            db.questions.insert_one({
+                "id": q_id_g2_ta,
+                "test_id": None,
+                "question_set_id": None,
+                "past_year_paper_id": p_g2_id,
+                "question_group_id": grp_id_g2,
+                "language": "ta",
+                "question_text": f"TNPSC Group 2 ({y}): இந்திய அரசியலமைப்பு சாசனம் ஏற்றுக்கொள்ளப்பட்ட நாள் எது?",
+                "option_a": "நவம்பர் 26, 1949",
+                "option_b": "ஜனவரி 26, 1950",
+                "option_c": "ஆகஸ்ட் 15, 1947",
+                "option_d": "ஜனவரி 30, 1948",
+                "correct_option": "A",
+                "explanation": "இந்திய அரசியலமைப்பு சாசனம் 1949 நவம்பர் 26 அன்று ஏற்றுக்கொள்ளப்பட்டது.",
+                "question_order": 1,
+                "source": "MANUAL",
+                "question_source": "ORIGINAL",
+                "status": "ACTIVE",
+                "created_at": now,
+                "updated_at": now
+            })
+            q_id_g2_en = get_next_sequence(db, "question_id")
+            db.questions.insert_one({
+                "id": q_id_g2_en,
+                "test_id": None,
+                "question_set_id": None,
+                "past_year_paper_id": p_g2_id,
+                "question_group_id": grp_id_g2,
+                "language": "en",
+                "question_text": f"TNPSC Group 2 ({y}): When was the Constitution of India adopted by the Constituent Assembly?",
+                "option_a": "November 26, 1949",
+                "option_b": "January 26, 1950",
+                "option_c": "August 15, 1947",
+                "option_d": "January 30, 1948",
+                "correct_option": "A",
+                "explanation": "The Constitution of India was adopted on 26 November 1949 and came into effect on 26 January 1950.",
+                "question_order": 1,
+                "source": "MANUAL",
+                "question_source": "ORIGINAL",
+                "status": "ACTIVE",
+                "created_at": now,
+                "updated_at": now
+            })
 
-            # Group 1 Past Paper
-            p_g1 = PastYearPaper(
-                exam_id=group1_exam.id,
-                year=y,
-                title=f"TNPSC Group 1 Prelims Question Paper {y}",
-                description=f"Official TNPSC Group 1 General Studies Preliminary Question Paper ({y}).",
-                duration_minutes=180,
-                question_count=200,
-                marks_per_question=1.5,
-                negative_mark=0.0,
-                price=0.0,
-                status=PastYearPaperStatus.PUBLISHED,
-                created_by=admin_user.id
-            )
-            db.add(p_g1)
-            db.commit()
-            db.refresh(p_g1)
+            # Group 1 Paper
+            p_g1_id = get_next_sequence(db, "past_year_paper_id")
+            p_g1 = {
+                "id": p_g1_id,
+                "exam_id": group1_exam["id"],
+                "year": y,
+                "title": f"TNPSC Group 1 Prelims Question Paper {y}",
+                "description": f"Official TNPSC Group 1 General Studies Preliminary Question Paper ({y}).",
+                "duration_minutes": 180,
+                "question_count": 200,
+                "marks_per_question": 1.5,
+                "negative_mark": 0.0,
+                "price": 0.0,
+                "status": PastYearPaperStatus.PUBLISHED,
+                "created_by": admin_id,
+                "created_at": now,
+                "updated_at": now
+            }
+            db.past_year_papers.insert_one(p_g1)
 
-            db.add(Question(
-                past_year_paper_id=p_g1.id,
-                question_group_id=7000 + y,
-                language="ta",
-                question_text=f"TNPSC Group 1 ({y}): தென்னிந்தியாவின் கங்கை என்று அழைக்கப்படும் ஆறு எது?",
-                option_a="காவிரி",
-                option_b="கோதாவரி",
-                option_c="கிருஷ்ணா",
-                option_d="வைகை",
-                correct_option="B",
-                explanation="கோதாவரி ஆறு தென்னிந்தியாவின் கங்கை (தட்சிண கங்கா) என்று அழைக்கப்படுகிறது.",
-                question_order=1,
-                source="MANUAL",
-                question_source="ORIGINAL"
-            ))
+            q_id_g1 = get_next_sequence(db, "question_id")
+            db.questions.insert_one({
+                "id": q_id_g1,
+                "test_id": None,
+                "question_set_id": None,
+                "past_year_paper_id": p_g1_id,
+                "question_group_id": 7000 + y,
+                "language": "ta",
+                "question_text": f"TNPSC Group 1 ({y}): தென்னிந்தியாவின் கங்கை என்று அழைக்கப்படும் ஆறு எது?",
+                "option_a": "காவிரி",
+                "option_b": "கோதாவரி",
+                "option_c": "கிருஷ்ணா",
+                "option_d": "வைகை",
+                "correct_option": "B",
+                "explanation": "கோதாவரி ஆறு தென்னிந்தியாவின் கங்கை (தட்சிண கங்கா) என்று அழைக்கப்படுகிறது.",
+                "question_order": 1,
+                "source": "MANUAL",
+                "question_source": "ORIGINAL",
+                "status": "ACTIVE",
+                "created_at": now,
+                "updated_at": now
+            })
 
-        db.commit()
         print("Seeded Past Year Papers (2025-2021) for Group 1, Group 2, and Group 4.")
-
-        print("Database re-seeding completed successfully with QuestionSets, PastYearPapers, and zero Group 4A entries!")
+        print("MongoDB database seeding completed successfully!")
 
     except Exception as e:
-        db.rollback()
-        print(f"Error seeding database: {e}")
+        print(f"Error seeding MongoDB database: {e}")
         raise e
-    finally:
-        db.close()
 
 if __name__ == "__main__":
     seed_db()

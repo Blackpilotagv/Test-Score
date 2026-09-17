@@ -62,7 +62,7 @@ export const Login: React.FC = () => {
             <LogIn className="w-6 h-6" />
           </div>
           <h1 className="text-2xl font-black text-gray-900">Student & Admin Login</h1>
-          <p className="text-xs text-gray-500">Sign in to access your TNPSC mock test portal</p>
+          <p className="text-xs text-gray-500">Sign in to access your Test-Score by MZAB Arcane portal</p>
         </div>
 
         {errorMsg && (

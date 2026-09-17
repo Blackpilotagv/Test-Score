@@ -22,7 +22,7 @@ export const Home: React.FC = () => {
         <div className="absolute inset-0 opacity-10 bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:16px_16px]"></div>
         <div className="max-w-5xl mx-auto text-center relative z-10 space-y-6">
           <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-sky-500/20 text-sky-200 border border-sky-400/30">
-            <Zap className="w-3.5 h-3.5 text-amber-400" /> Dedicated TNPSC Mock Exam Platform
+            <Zap className="w-3.5 h-3.5 text-amber-400" /> Test-Score by MZAB Arcane
           </span>
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-tight">
             Prepare Smarter. <span className="text-sky-300">Test Every Day.</span>

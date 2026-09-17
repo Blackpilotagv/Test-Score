@@ -37,26 +37,26 @@ export const AdminDashboard: React.FC = () => {
       </div>
 
       {/* Admin Navigation Quick Links */}
-      <div className="grid grid-cols-2 sm:grid-cols-7 gap-3">
-        <Link to="/admin/scheduler" className="bg-amber-600 text-white p-4 rounded-xl text-center font-extrabold hover:bg-amber-700 transition-all text-xs sm:text-sm shadow-sm flex items-center justify-center gap-1">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-2.5 sm:gap-3">
+        <Link to="/admin/scheduler" className="bg-amber-600 text-white p-3.5 sm:p-4 rounded-xl text-center font-extrabold hover:bg-amber-700 transition-all text-xs sm:text-sm shadow-2xs flex items-center justify-center gap-1">
           📅 Daily Scheduler
         </Link>
-        <Link to="/admin/past-year-papers" className="bg-indigo-600 text-white p-4 rounded-xl text-center font-extrabold hover:bg-indigo-700 transition-all text-xs sm:text-sm shadow-sm flex items-center justify-center gap-1">
+        <Link to="/admin/past-year-papers" className="bg-indigo-600 text-white p-3.5 sm:p-4 rounded-xl text-center font-extrabold hover:bg-indigo-700 transition-all text-xs sm:text-sm shadow-2xs flex items-center justify-center gap-1">
           📄 Past Papers
         </Link>
-        <Link to="/admin/exams" className="bg-white border border-gray-200 p-4 rounded-xl text-center font-bold text-gray-800 hover:border-amber-500 hover:text-amber-700 transition-all text-xs sm:text-sm">
+        <Link to="/admin/exams" className="bg-white border border-gray-200 p-3.5 sm:p-4 rounded-xl text-center font-bold text-gray-800 hover:border-amber-500 hover:text-amber-700 transition-all text-xs sm:text-sm">
           📚 Exams ({stats?.total_exams || 0})
         </Link>
-        <Link to="/admin/tests" className="bg-white border border-gray-200 p-4 rounded-xl text-center font-bold text-gray-800 hover:border-amber-500 hover:text-amber-700 transition-all text-xs sm:text-sm">
+        <Link to="/admin/tests" className="bg-white border border-gray-200 p-3.5 sm:p-4 rounded-xl text-center font-bold text-gray-800 hover:border-amber-500 hover:text-amber-700 transition-all text-xs sm:text-sm">
           📝 Daily Tests ({stats?.tests_published || 0})
         </Link>
-        <Link to="/admin/questions" className="bg-white border border-gray-200 p-4 rounded-xl text-center font-bold text-gray-800 hover:border-amber-500 hover:text-amber-700 transition-all text-xs sm:text-sm">
+        <Link to="/admin/questions" className="bg-white border border-gray-200 p-3.5 sm:p-4 rounded-xl text-center font-bold text-gray-800 hover:border-amber-500 hover:text-amber-700 transition-all text-xs sm:text-sm">
           ❓ Questions Editor
         </Link>
-        <Link to="/admin/students" className="bg-white border border-amber-300 bg-amber-50/50 p-4 rounded-xl text-center font-bold text-amber-900 hover:bg-amber-100 transition-all text-xs sm:text-sm flex items-center justify-center gap-1">
+        <Link to="/admin/students" className="bg-white border border-amber-300 bg-amber-50/50 p-3.5 sm:p-4 rounded-xl text-center font-bold text-amber-900 hover:bg-amber-100 transition-all text-xs sm:text-sm flex items-center justify-center gap-1">
           <Key className="w-4 h-4 text-amber-700" /> Students & Access
         </Link>
-        <Link to="/admin/payments" className="bg-white border border-gray-200 p-4 rounded-xl text-center font-bold text-gray-800 hover:border-amber-500 hover:text-amber-700 transition-all text-xs sm:text-sm">
+        <Link to="/admin/payments" className="bg-white border border-gray-200 p-3.5 sm:p-4 rounded-xl text-center font-bold text-gray-800 hover:border-amber-500 hover:text-amber-700 transition-all text-xs sm:text-sm col-span-2 sm:col-span-1">
           💳 Payments Audit
         </Link>
       </div>

@@ -1,16 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from typing import List, Optional
 from datetime import datetime
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status
+from pymongo import DESCENDING, ASCENDING
 
-from app.database.session import get_db
+from app.database.session import get_db, get_next_sequence
 from app.models.models import (
-    User, Exam, PastYearPaper, PastYearPaperStatus, Question,
-    Payment, PaymentStatus, TestAttempt, AttemptStatus, Answer
+    PastYearPaperStatus, PaymentStatus, AttemptStatus, to_mongo_doc
 )
 from app.schemas.schemas import (
     PastYearPaperOut, StartAttemptRequest, SaveAnswerRequest,
-    QuestionClientOut, QuestionReviewOut, ResultOut, AttemptSummaryOut
+    QuestionClientOut, QuestionReviewOut, ResultOut
 )
 from app.api.deps import get_current_user
 from app.services.eval_service import evaluate_attempt, check_and_get_remaining_seconds
@@ -22,30 +21,36 @@ router = APIRouter(prefix="/past-year-papers", tags=["Student Past Year Papers"]
 def get_published_past_year_papers(
     exam_id: Optional[int] = None,
     year: Optional[int] = None,
-    db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(get_current_user)
+    db = Depends(get_db),
+    current_user: Optional[Any] = Depends(get_current_user)
 ):
-    query = db.query(PastYearPaper).filter(PastYearPaper.status == PastYearPaperStatus.PUBLISHED)
+    query_filter = {"status": PastYearPaperStatus.PUBLISHED}
     if exam_id:
-        query = query.filter(PastYearPaper.exam_id == exam_id)
+        query_filter["exam_id"] = exam_id
     if year:
-        query = query.filter(PastYearPaper.year == year)
+        query_filter["year"] = year
 
-    papers = query.order_by(PastYearPaper.year.desc(), PastYearPaper.id.desc()).all()
+    paper_docs = list(db.past_year_papers.find(
+        query_filter,
+        sort=[("year", DESCENDING), ("id", DESCENDING)]
+    ))
 
-    # User payments check
     purchased_paper_ids = set()
     if current_user:
-        payments = db.query(Payment.past_year_paper_id).filter(
-            Payment.user_id == current_user.id,
-            Payment.status == PaymentStatus.SUCCESS,
-            Payment.past_year_paper_id != None
-        ).all()
-        purchased_paper_ids = {p[0] for p in payments}
+        pmts = list(db.payments.find({
+            "user_id": current_user.id,
+            "status": PaymentStatus.SUCCESS,
+            "past_year_paper_id": {"$ne": None}
+        }))
+        purchased_paper_ids = {p["past_year_paper_id"] for p in pmts if p.get("past_year_paper_id")}
 
     out = []
-    for p in papers:
-        cfg = EXAM_CONFIG.get(p.exam.slug) if p.exam else None
+    for p_doc in paper_docs:
+        p = to_mongo_doc(p_doc)
+        exam_doc = db.exams.find_one({"id": p.exam_id}) if p.exam_id else None
+        exam_name = exam_doc["name"] if exam_doc else ""
+        exam_slug = exam_doc["slug"] if exam_doc else ""
+        cfg = EXAM_CONFIG.get(exam_slug)
         allowed_langs = cfg["allowed_languages"] if cfg else ["ta"]
         has_access = (p.price == 0.0) or (p.id in purchased_paper_ids)
 
@@ -61,8 +66,8 @@ def get_published_past_year_papers(
             negative_mark=p.negative_mark,
             price=p.price,
             status=p.status,
-            exam_name=p.exam.name if p.exam else "",
-            exam_slug=p.exam.slug if p.exam else "",
+            exam_name=exam_name,
+            exam_slug=exam_slug,
             allowed_languages=allowed_langs,
             created_at=p.created_at,
             updated_at=p.updated_at,
@@ -73,26 +78,30 @@ def get_published_past_year_papers(
 @router.get("/{paper_id}", response_model=PastYearPaperOut)
 def get_past_year_paper_by_id(
     paper_id: int,
-    db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(get_current_user)
+    db = Depends(get_db),
+    current_user: Optional[Any] = Depends(get_current_user)
 ):
-    paper = db.query(PastYearPaper).filter(PastYearPaper.id == paper_id).first()
-    if not paper:
+    paper_doc = db.past_year_papers.find_one({"id": paper_id})
+    if not paper_doc:
         raise HTTPException(status_code=404, detail="Past year paper not found")
 
+    paper = to_mongo_doc(paper_doc)
     has_access = False
     if paper.price == 0.0:
         has_access = True
     elif current_user:
-        pmt = db.query(Payment).filter(
-            Payment.user_id == current_user.id,
-            Payment.past_year_paper_id == paper.id,
-            Payment.status == PaymentStatus.SUCCESS
-        ).first()
+        pmt = db.payments.find_one({
+            "user_id": current_user.id,
+            "past_year_paper_id": paper.id,
+            "status": PaymentStatus.SUCCESS
+        })
         if pmt:
             has_access = True
 
-    cfg = EXAM_CONFIG.get(paper.exam.slug) if paper.exam else None
+    exam_doc = db.exams.find_one({"id": paper.exam_id}) if paper.exam_id else None
+    exam_name = exam_doc["name"] if exam_doc else ""
+    exam_slug = exam_doc["slug"] if exam_doc else ""
+    cfg = EXAM_CONFIG.get(exam_slug)
     allowed_langs = cfg["allowed_languages"] if cfg else ["ta"]
 
     return PastYearPaperOut(
@@ -107,8 +116,8 @@ def get_past_year_paper_by_id(
         negative_mark=paper.negative_mark,
         price=paper.price,
         status=paper.status,
-        exam_name=paper.exam.name if paper.exam else "",
-        exam_slug=paper.exam.slug if paper.exam else "",
+        exam_name=exam_name,
+        exam_slug=exam_slug,
         allowed_languages=allowed_langs,
         created_at=paper.created_at,
         updated_at=paper.updated_at,
@@ -119,77 +128,92 @@ def get_past_year_paper_by_id(
 def start_past_year_attempt(
     paper_id: int,
     req: StartAttemptRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
-    paper = db.query(PastYearPaper).filter(PastYearPaper.id == paper_id).first()
-    if not paper:
+    paper_doc = db.past_year_papers.find_one({"id": paper_id})
+    if not paper_doc:
         raise HTTPException(status_code=404, detail="Past year paper not found")
+    paper = to_mongo_doc(paper_doc)
 
     if paper.status != PastYearPaperStatus.PUBLISHED:
         raise HTTPException(status_code=400, detail="This past year paper is not currently available.")
 
-    # Access control
     if paper.price > 0:
-        pmt = db.query(Payment).filter(
-            Payment.user_id == current_user.id,
-            Payment.past_year_paper_id == paper.id,
-            Payment.status == PaymentStatus.SUCCESS
-        ).first()
+        pmt = db.payments.find_one({
+            "user_id": current_user.id,
+            "past_year_paper_id": paper.id,
+            "status": PaymentStatus.SUCCESS
+        })
         if not pmt:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You must purchase this paper before attempting.")
 
-    cfg = EXAM_CONFIG.get(paper.exam.slug) if paper.exam else None
+    exam_doc = db.exams.find_one({"id": paper.exam_id}) if paper.exam_id else None
+    exam_name = exam_doc["name"] if exam_doc else ""
+    exam_slug = exam_doc["slug"] if exam_doc else ""
+    cfg = EXAM_CONFIG.get(exam_slug)
     allowed_langs = cfg["allowed_languages"] if cfg else ["ta"]
 
     if req.language not in allowed_langs:
         raise HTTPException(status_code=400, detail=f"Language '{req.language}' not allowed for this paper.")
 
-    # Check existing attempt
-    attempt = db.query(TestAttempt).filter(
-        TestAttempt.user_id == current_user.id,
-        TestAttempt.past_year_paper_id == paper.id
-    ).order_by(TestAttempt.id.desc()).first()
+    attempt_doc = db.test_attempts.find_one(
+        {"user_id": current_user.id, "past_year_paper_id": paper.id},
+        sort=[("id", DESCENDING)]
+    )
+    attempt = to_mongo_doc(attempt_doc)
 
     if not attempt or attempt.status == AttemptStatus.SUBMITTED:
-        unique_groups = db.query(Question.question_group_id).filter(
-            Question.past_year_paper_id == paper.id
-        ).distinct().count()
+        groups = db.questions.distinct("question_group_id", {"past_year_paper_id": paper.id})
+        unique_groups = len(groups)
 
-        attempt = TestAttempt(
-            user_id=current_user.id,
-            past_year_paper_id=paper.id,
-            started_at=datetime.utcnow(),
-            status=AttemptStatus.IN_PROGRESS,
-            total_questions=unique_groups
-        )
-        db.add(attempt)
-        db.commit()
-        db.refresh(attempt)
+        attempt_id = get_next_sequence(db, "attempt_id")
+        now = datetime.utcnow()
+        new_attempt = {
+            "id": attempt_id,
+            "user_id": current_user.id,
+            "test_id": None,
+            "question_set_id": None,
+            "past_year_paper_id": paper.id,
+            "started_at": now,
+            "submitted_at": None,
+            "status": AttemptStatus.IN_PROGRESS,
+            "score": 0.0,
+            "correct_answers": 0,
+            "wrong_answers": 0,
+            "unanswered": 0,
+            "total_questions": unique_groups,
+            "percentage": 0.0,
+            "time_taken": None,
+            "created_at": now
+        }
+        db.test_attempts.insert_one(new_attempt)
+        attempt = to_mongo_doc(new_attempt)
 
     remaining_secs = check_and_get_remaining_seconds(attempt, paper.duration_minutes)
     if remaining_secs <= 0 and attempt.status == AttemptStatus.IN_PROGRESS:
         evaluate_attempt(db, attempt.id)
         raise HTTPException(status_code=400, detail="Paper attempt timer has expired.")
 
-    questions = db.query(Question).filter(
-        Question.past_year_paper_id == paper.id,
-        Question.language == req.language
-    ).order_by(Question.question_order.asc()).all()
+    q_docs = list(db.questions.find(
+        {"past_year_paper_id": paper.id, "language": req.language},
+        sort=[("question_order", ASCENDING)]
+    ))
+    q_out = [QuestionClientOut.model_validate(q) for q in q_docs]
 
-    q_out = [QuestionClientOut.model_validate(q) for q in questions]
+    user_answers = list(db.answers.find({"attempt_id": attempt.id}))
+    answers_dict = {ans["question_group_id"]: ans["selected_option"] for ans in user_answers}
 
-    user_answers = db.query(Answer).filter(Answer.attempt_id == attempt.id).all()
-    answers_dict = {ans.question_group_id: ans.selected_option for ans in user_answers}
+    status_str = attempt.status.value if hasattr(attempt.status, 'value') else str(attempt.status)
 
     return {
         "attempt_id": attempt.id,
         "past_year_paper_id": paper.id,
         "test_title": paper.title,
-        "exam_name": paper.exam.name if paper.exam else "",
+        "exam_name": exam_name,
         "duration_minutes": paper.duration_minutes,
         "remaining_seconds": remaining_secs,
-        "status": attempt.status.value,
+        "status": status_str,
         "allowed_languages": allowed_langs,
         "current_language": req.language,
         "questions": q_out,
@@ -200,41 +224,46 @@ def start_past_year_attempt(
 def get_paper_attempt_status(
     attempt_id: int,
     language: str = "ta",
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
-    attempt = db.query(TestAttempt).filter(
-        TestAttempt.id == attempt_id,
-        TestAttempt.user_id == current_user.id
-    ).first()
-    if not attempt or not attempt.past_year_paper_id:
+    attempt_doc = db.test_attempts.find_one({"id": attempt_id, "user_id": current_user.id})
+    if not attempt_doc or not attempt_doc.get("past_year_paper_id"):
         raise HTTPException(status_code=404, detail="Paper attempt not found")
 
-    paper = attempt.past_year_paper
-    cfg = EXAM_CONFIG.get(paper.exam.slug) if paper.exam else None
+    attempt = to_mongo_doc(attempt_doc)
+    paper_doc = db.past_year_papers.find_one({"id": attempt.past_year_paper_id})
+    paper = to_mongo_doc(paper_doc)
+
+    exam_doc = db.exams.find_one({"id": paper.exam_id}) if paper.exam_id else None
+    exam_name = exam_doc["name"] if exam_doc else ""
+    exam_slug = exam_doc["slug"] if exam_doc else ""
+    cfg = EXAM_CONFIG.get(exam_slug)
     allowed_langs = cfg["allowed_languages"] if cfg else ["ta"]
 
     remaining_secs = check_and_get_remaining_seconds(attempt, paper.duration_minutes)
     if remaining_secs <= 0 and attempt.status == AttemptStatus.IN_PROGRESS:
         attempt = evaluate_attempt(db, attempt.id)
 
-    questions = db.query(Question).filter(
-        Question.past_year_paper_id == paper.id,
-        Question.language == language
-    ).order_by(Question.question_order.asc()).all()
+    q_docs = list(db.questions.find(
+        {"past_year_paper_id": paper.id, "language": language},
+        sort=[("question_order", ASCENDING)]
+    ))
+    q_out = [QuestionClientOut.model_validate(q) for q in q_docs]
 
-    q_out = [QuestionClientOut.model_validate(q) for q in questions]
-    user_answers = db.query(Answer).filter(Answer.attempt_id == attempt.id).all()
-    answers_dict = {ans.question_group_id: ans.selected_option for ans in user_answers}
+    user_answers = list(db.answers.find({"attempt_id": attempt.id}))
+    answers_dict = {ans["question_group_id"]: ans["selected_option"] for ans in user_answers}
+
+    status_str = attempt.status.value if hasattr(attempt.status, 'value') else str(attempt.status)
 
     return {
         "attempt_id": attempt.id,
         "past_year_paper_id": paper.id,
         "test_title": paper.title,
-        "exam_name": paper.exam.name if paper.exam else "",
+        "exam_name": exam_name,
         "duration_minutes": paper.duration_minutes,
         "remaining_seconds": remaining_secs,
-        "status": attempt.status.value,
+        "status": status_str,
         "allowed_languages": allowed_langs,
         "current_language": language,
         "questions": q_out,
@@ -245,58 +274,43 @@ def get_paper_attempt_status(
 def auto_save_paper_answer(
     attempt_id: int,
     req: SaveAnswerRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
-    attempt = db.query(TestAttempt).filter(
-        TestAttempt.id == attempt_id,
-        TestAttempt.user_id == current_user.id
-    ).first()
-    if not attempt or not attempt.past_year_paper_id:
+    attempt_doc = db.test_attempts.find_one({"id": attempt_id, "user_id": current_user.id})
+    if not attempt_doc or not attempt_doc.get("past_year_paper_id"):
         raise HTTPException(status_code=404, detail="Paper attempt not found")
 
+    attempt = to_mongo_doc(attempt_doc)
     if attempt.status != AttemptStatus.IN_PROGRESS:
         raise HTTPException(status_code=400, detail="Attempt is already completed or expired")
 
-    paper = attempt.past_year_paper
+    paper_doc = db.past_year_papers.find_one({"id": attempt.past_year_paper_id})
+    paper = to_mongo_doc(paper_doc)
     if check_and_get_remaining_seconds(attempt, paper.duration_minutes) <= 0:
         evaluate_attempt(db, attempt.id)
         raise HTTPException(status_code=400, detail="Timer expired. Paper attempt submitted automatically.")
 
-    ans = db.query(Answer).filter(
-        Answer.attempt_id == attempt.id,
-        Answer.question_group_id == req.question_group_id
-    ).first()
-
-    if not ans:
-        ans = Answer(
-            attempt_id=attempt.id,
-            question_group_id=req.question_group_id,
-            selected_option=req.selected_option,
-            answered_at=datetime.utcnow()
-        )
-        db.add(ans)
-    else:
-        ans.selected_option = req.selected_option
-        ans.answered_at = datetime.utcnow()
-
-    db.commit()
+    db.answers.update_one(
+        {"attempt_id": attempt.id, "question_group_id": req.question_group_id},
+        {"$set": {"selected_option": req.selected_option, "answered_at": datetime.utcnow()}},
+        upsert=True
+    )
     return {"status": "saved", "question_group_id": req.question_group_id, "selected_option": req.selected_option}
 
 @router.post("/attempts/{attempt_id}/submit")
 def submit_paper_attempt(
     attempt_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
-    attempt = db.query(TestAttempt).filter(
-        TestAttempt.id == attempt_id,
-        TestAttempt.user_id == current_user.id
-    ).first()
-    if not attempt or not attempt.past_year_paper_id:
+    attempt_doc = db.test_attempts.find_one({"id": attempt_id, "user_id": current_user.id})
+    if not attempt_doc or not attempt_doc.get("past_year_paper_id"):
         raise HTTPException(status_code=404, detail="Paper attempt not found")
 
-    evaluated = evaluate_attempt(db, attempt.id)
+    evaluated = evaluate_attempt(db, attempt_id)
+    status_str = evaluated.status.value if hasattr(evaluated.status, 'value') else str(evaluated.status)
+
     return {
         "attempt_id": evaluated.id,
         "past_year_paper_id": evaluated.past_year_paper_id,
@@ -307,37 +321,41 @@ def submit_paper_attempt(
         "unanswered": evaluated.unanswered,
         "total_questions": evaluated.total_questions,
         "time_taken": evaluated.time_taken,
-        "status": evaluated.status.value
+        "status": status_str
     }
 
 @router.get("/attempts/{attempt_id}/result", response_model=ResultOut)
 def get_paper_attempt_result(
     attempt_id: int,
     language: str = "ta",
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
-    attempt = db.query(TestAttempt).filter(
-        TestAttempt.id == attempt_id,
-        TestAttempt.user_id == current_user.id
-    ).first()
-    if not attempt or not attempt.past_year_paper_id:
+    attempt_doc = db.test_attempts.find_one({"id": attempt_id, "user_id": current_user.id})
+    if not attempt_doc or not attempt_doc.get("past_year_paper_id"):
         raise HTTPException(status_code=404, detail="Paper attempt not found")
 
+    attempt = to_mongo_doc(attempt_doc)
     if attempt.status != AttemptStatus.SUBMITTED:
         attempt = evaluate_attempt(db, attempt.id)
 
-    paper = attempt.past_year_paper
-    cfg = EXAM_CONFIG.get(paper.exam.slug) if paper.exam else None
+    paper_doc = db.past_year_papers.find_one({"id": attempt.past_year_paper_id})
+    paper = to_mongo_doc(paper_doc)
+
+    exam_doc = db.exams.find_one({"id": paper.exam_id}) if paper.exam_id else None
+    exam_name = exam_doc["name"] if exam_doc else ""
+    exam_slug = exam_doc["slug"] if exam_doc else ""
+    cfg = EXAM_CONFIG.get(exam_slug)
     allowed_langs = cfg["allowed_languages"] if cfg else ["ta"]
 
-    questions = db.query(Question).filter(
-        Question.past_year_paper_id == paper.id,
-        Question.language == language
-    ).order_by(Question.question_order.asc()).all()
+    q_docs = list(db.questions.find(
+        {"past_year_paper_id": paper.id, "language": language},
+        sort=[("question_order", ASCENDING)]
+    ))
+    questions = [to_mongo_doc(q) for q in q_docs]
 
-    user_answers = db.query(Answer).filter(Answer.attempt_id == attempt.id).all()
-    answers_map = {ans.question_group_id: ans for ans in user_answers}
+    user_answers_docs = list(db.answers.find({"attempt_id": attempt.id}))
+    answers_map = {ans["question_group_id"]: to_mongo_doc(ans) for ans in user_answers_docs}
 
     reviews = []
     for q in questions:
@@ -345,7 +363,7 @@ def get_paper_attempt_result(
         stud_ans = ans.selected_option if ans else None
         if not stud_ans:
             st = "Unanswered"
-        elif stud_ans.upper() == q.correct_option.upper():
+        elif str(stud_ans).upper() == str(q.correct_option).upper():
             st = "Correct"
         else:
             st = "Incorrect"
@@ -370,7 +388,7 @@ def get_paper_attempt_result(
         test_id=None,
         past_year_paper_id=paper.id,
         test_title=paper.title,
-        exam_name=paper.exam.name if paper.exam else "",
+        exam_name=exam_name,
         allowed_languages=allowed_langs,
         active_language=language,
         started_at=attempt.started_at,

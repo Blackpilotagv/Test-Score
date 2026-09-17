@@ -1,0 +1,39 @@
+# Render Blueprint configuration for Test-Score by MZAB Arcane
+services:
+  # FastAPI Backend Web Service
+  - type: web
+    name: test-score-backend
+    env: python
+    buildCommand: "cd backend && pip install -r requirements.txt"
+    startCommand: "cd backend && gunicorn -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT app.main:app"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: PROJECT_NAME
+        value: "Test-Score by MZAB Arcane"
+      - key: API_V1_STR
+        value: "/api"
+      - key: MONGODB_URL
+        sync: false
+      - key: MONGODB_DB_NAME
+        value: "test_score_db"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: PAYMENT_MODE
+        value: "MOCK"
+      - key: ALLOWED_ORIGINS
+        value: "*"
+
+  # React Static Site Frontend
+  - type: web
+    name: test-score-frontend
+    env: static
+    buildCommand: "cd frontend && npm install && npm run build"
+    staticPublishPath: "./frontend/dist"
+    routes:
+      - type: rewrite
+        source: "/*"
+        destination: "/index.html"
+    envVars:
+      - key: VITE_API_BASE_URL
+        sync: false

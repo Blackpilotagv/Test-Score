@@ -8,13 +8,13 @@ export const Footer: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
           <div className="md:col-span-2">
             <div className="flex items-center gap-2 mb-4">
-              <div className="w-8 h-8 rounded bg-sky-500 flex items-center justify-center text-white font-bold text-lg">
-                TN
+              <div className="w-8 h-8 rounded bg-gradient-to-tr from-sky-500 to-indigo-500 flex items-center justify-center text-white font-black text-base shadow-xs">
+                TS
               </div>
-              <span className="text-xl font-bold text-white tracking-tight">TNPSC Mock Assessment</span>
+              <span className="text-xl font-bold text-white tracking-tight">Test-Score <span className="text-sky-400 text-xs font-normal">by MZAB Arcane</span></span>
             </div>
             <p className="text-sm text-gray-400 max-w-md leading-relaxed">
-              Prepare Smarter. Test Every Day. Daily online assessments specifically designed for TNPSC Group 1, Group 2, Group 4, and Group 4A competitive exams.
+              Prepare Smarter. Test Every Day. Daily online assessments and past year papers powered by Test-Score by MZAB Arcane.
             </p>
           </div>
 
@@ -39,8 +39,8 @@ export const Footer: React.FC = () => {
         </div>
 
         <div className="pt-8 border-t border-gray-800 text-xs text-center text-gray-500">
-          <p>© {new Date().getFullYear()} TNPSC Mock Assessment Platform. All rights reserved.</p>
-          <p className="mt-1">Designed for daily practice and assessment for Tamil Nadu Public Service Commission exams.</p>
+          <p>© {new Date().getFullYear()} Test-Score by MZAB Arcane. All rights reserved.</p>
+          <p className="mt-1">Designed for daily practice and assessment for competitive examinations.</p>
         </div>
       </div>
     </footer>

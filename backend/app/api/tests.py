@@ -1,22 +1,21 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 from typing import List, Optional
+from pymongo import DESCENDING, ASCENDING
 from app.database.session import get_db
-from app.models.models import Test, TestStatus, Payment, PaymentStatus, Exam, QuestionSet, QuestionSetStatus
+from app.models.models import TestStatus, PaymentStatus, QuestionSetStatus, to_mongo_doc
 from app.schemas.schemas import TestOut
 from app.api.deps import oauth2_scheme
-from app.core.config import EXAM_CONFIG
+from app.core.config import EXAM_CONFIG, settings
 from jose import jwt
-from app.core.config import settings
 
 router = APIRouter(prefix="/tests", tags=["Tests"])
 
-def check_user_access(db: Session, user_id: int, test_id: int) -> bool:
-    payment = db.query(Payment).filter(
-        Payment.user_id == user_id,
-        Payment.test_id == test_id,
-        Payment.status == PaymentStatus.SUCCESS
-    ).first()
+def check_user_access(db, user_id: int, test_id: int) -> bool:
+    payment = db.payments.find_one({
+        "user_id": user_id,
+        "test_id": test_id,
+        "status": PaymentStatus.SUCCESS
+    })
     return payment is not None
 
 def get_allowed_languages(exam_slug: str) -> List[str]:
@@ -25,30 +24,30 @@ def get_allowed_languages(exam_slug: str) -> List[str]:
         return cfg["allowed_languages"]
     return ["ta"]
 
-def get_question_set_info(db: Session, test_id: int):
+def get_question_set_info(db, test_id: int):
     """Helper to check active QuestionSet and next scheduled publish date."""
-    active_set = db.query(QuestionSet).filter(
-        QuestionSet.test_id == test_id,
-        QuestionSet.status == QuestionSetStatus.ACTIVE
-    ).order_by(QuestionSet.id.desc()).first()
+    active_set = db.question_sets.find_one(
+        {"test_id": test_id, "status": QuestionSetStatus.ACTIVE},
+        sort=[("id", DESCENDING)]
+    )
 
     if active_set:
-        return True, active_set.id, f"Active set available (Date: {active_set.schedule_date})"
+        return True, active_set["id"], f"Active set available (Date: {active_set['schedule_date']})"
 
-    next_sched = db.query(QuestionSet).filter(
-        QuestionSet.test_id == test_id,
-        QuestionSet.status == QuestionSetStatus.SCHEDULED
-    ).order_by(QuestionSet.schedule_date.asc()).first()
+    next_sched = db.question_sets.find_one(
+        {"test_id": test_id, "status": QuestionSetStatus.SCHEDULED},
+        sort=[("schedule_date", ASCENDING)]
+    )
 
     if next_sched:
-        return False, None, f"Next test scheduled for {next_sched.schedule_date} at 12:00 PM IST."
+        return False, None, f"Next test scheduled for {next_sched['schedule_date']} at 12:00 PM IST."
 
     return False, None, "Today's daily test is not currently available. Next test starts at 12:00 PM IST."
 
 @router.get("", response_model=List[TestOut])
 def get_published_tests(
     exam_id: Optional[int] = None,
-    db: Session = Depends(get_db),
+    db = Depends(get_db),
     token: Optional[str] = Depends(oauth2_scheme)
 ):
     user_id = None
@@ -59,20 +58,22 @@ def get_published_tests(
         except Exception:
             pass
 
-    query = db.query(Test).filter(Test.status == TestStatus.PUBLISHED)
+    query_filter = {"status": TestStatus.PUBLISHED}
     if exam_id:
-        query = query.filter(Test.exam_id == exam_id)
+        query_filter["exam_id"] = exam_id
 
-    tests = query.order_by(Test.id.desc()).all()
+    tests_list = list(db.tests.find(query_filter, sort=[("id", DESCENDING)]))
     result = []
 
-    for t in tests:
+    for t_doc in tests_list:
+        t = to_mongo_doc(t_doc)
         has_access = False
         if user_id:
             has_access = check_user_access(db, user_id, t.id)
         
-        exam_name = t.exam.name if t.exam else ""
-        exam_slug = t.exam.slug if t.exam else ""
+        exam_doc = db.exams.find_one({"id": t.exam_id})
+        exam_name = exam_doc["name"] if exam_doc else ""
+        exam_slug = exam_doc["slug"] if exam_doc else ""
         allowed_langs = get_allowed_languages(exam_slug)
         has_active, active_id, next_info = get_question_set_info(db, t.id)
 
@@ -102,7 +103,7 @@ def get_published_tests(
 @router.get("/{test_id}", response_model=TestOut)
 def get_test_details(
     test_id: int,
-    db: Session = Depends(get_db),
+    db = Depends(get_db),
     token: Optional[str] = Depends(oauth2_scheme)
 ):
     user_id = None
@@ -113,16 +114,18 @@ def get_test_details(
         except Exception:
             pass
 
-    test = db.query(Test).filter(Test.id == test_id).first()
-    if not test:
+    t_doc = db.tests.find_one({"id": test_id})
+    if not t_doc:
         raise HTTPException(status_code=404, detail="Daily test not found")
 
+    test = to_mongo_doc(t_doc)
     has_access = False
     if user_id:
         has_access = check_user_access(db, user_id, test.id)
 
-    exam_name = test.exam.name if test.exam else ""
-    exam_slug = test.exam.slug if test.exam else ""
+    exam_doc = db.exams.find_one({"id": test.exam_id})
+    exam_name = exam_doc["name"] if exam_doc else ""
+    exam_slug = exam_doc["slug"] if exam_doc else ""
     allowed_langs = get_allowed_languages(exam_slug)
     has_active, active_id, next_info = get_question_set_info(db, test.id)
 
@@ -145,4 +148,3 @@ def get_test_details(
         active_question_set_id=active_id,
         next_publish_info=next_info
     )
-

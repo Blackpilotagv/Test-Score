@@ -150,14 +150,14 @@ export const PastYearPapersPage: React.FC = () => {
           )}
         </div>
 
-        <div className="flex flex-wrap gap-3 items-center">
+        <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center overflow-x-auto max-w-full pb-1 scrollbar-none">
           {/* Exam Tabs */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2 overflow-x-auto max-w-full pb-1 flex-shrink-0">
             <button
               onClick={() => handleExamFilter(null)}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
                 selectedExamId === null
-                  ? 'bg-sky-600 text-white shadow-md'
+                  ? 'bg-sky-600 text-white shadow-xs'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}
             >
@@ -167,9 +167,9 @@ export const PastYearPapersPage: React.FC = () => {
               <button
                 key={exam.id}
                 onClick={() => handleExamFilter(exam.id)}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
                   selectedExamId === exam.id
-                    ? 'bg-sky-600 text-white shadow-md'
+                    ? 'bg-sky-600 text-white shadow-xs'
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
               >
@@ -178,16 +178,16 @@ export const PastYearPapersPage: React.FC = () => {
             ))}
           </div>
 
-          <div className="h-6 w-px bg-gray-200 hidden sm:block"></div>
+          <div className="h-6 w-px bg-gray-200 hidden sm:block flex-shrink-0"></div>
 
           {/* Year Filter */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-            <span className="text-xs font-semibold text-gray-500 mr-1">Year:</span>
+          <div className="flex items-center gap-1.5 overflow-x-auto max-w-full pb-1 flex-shrink-0">
+            <span className="text-xs font-semibold text-gray-500 mr-1 flex-shrink-0">Year:</span>
             <button
               onClick={() => handleYearFilter(null)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
                 selectedYear === null
-                  ? 'bg-indigo-600 text-white shadow-sm'
+                  ? 'bg-indigo-600 text-white shadow-2xs'
                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
               }`}
             >
@@ -197,9 +197,9 @@ export const PastYearPapersPage: React.FC = () => {
               <button
                 key={yr}
                 onClick={() => handleYearFilter(yr)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
                   selectedYear === yr
-                    ? 'bg-indigo-600 text-white shadow-sm'
+                    ? 'bg-indigo-600 text-white shadow-2xs'
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                 }`}
               >

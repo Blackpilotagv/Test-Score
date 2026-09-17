@@ -9,7 +9,7 @@ export const About: React.FC = () => {
           About Platform
         </span>
         <h1 className="text-3xl sm:text-4xl font-extrabold text-gray-900">
-          TNPSC Daily Mock Assessment Platform
+          Test-Score by MZAB Arcane
         </h1>
         <p className="text-gray-600 max-w-2xl mx-auto">
           Dedicated online mock evaluation system designed for Tamil Nadu competitive exam aspirants.

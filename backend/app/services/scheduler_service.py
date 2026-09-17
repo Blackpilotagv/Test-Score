@@ -2,13 +2,11 @@ import logging
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 from typing import List, Dict, Any, Optional
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from app.database.session import SessionLocal
-from app.models.models import QuestionSet, QuestionSetStatus, AuditLog, Question, Test
+from app.database.session import get_mongo_db, get_next_sequence
+from app.models.models import QuestionSetStatus, to_mongo_doc
 
 logger = logging.getLogger("scheduler")
 logger.setLevel(logging.INFO)
@@ -16,27 +14,19 @@ logger.setLevel(logging.INFO)
 IST_TIMEZONE = ZoneInfo("Asia/Kolkata")
 
 def get_current_ist_datetime() -> datetime:
-    """Returns the current date & time in Asia/Kolkata timezone."""
     return datetime.now(IST_TIMEZONE)
 
 def get_current_ist_date() -> date:
-    """Returns the current date in Asia/Kolkata timezone."""
     return get_current_ist_datetime().date()
 
 def get_current_ist_date_str() -> str:
-    """Returns current IST date formatted as YYYY-MM-DD."""
     return get_current_ist_date().strftime("%Y-%m-%d")
 
 def get_ist_12pm_utc(schedule_date: date) -> datetime:
-    """Converts 12:00:00 PM IST on schedule_date into a UTC datetime for DB storage."""
     ist_dt = datetime.combine(schedule_date, datetime.min.time().replace(hour=12, minute=0, second=0)).replace(tzinfo=IST_TIMEZONE)
     return ist_dt.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
 
 def validate_schedule_date(schedule_date_str: str) -> date:
-    """
-    Validates that schedule_date_str is in YYYY-MM-DD format,
-    is not in the past, and does not exceed the 7-day rolling horizon.
-    """
     try:
         target_date = datetime.strptime(schedule_date_str, "%Y-%m-%d").date()
     except ValueError:
@@ -55,27 +45,18 @@ def validate_schedule_date(schedule_date_str: str) -> date:
 
     return target_date
 
-def create_audit_log(db: Session, action: str, user_id: Optional[int] = None, question_set_id: Optional[int] = None, details: Optional[str] = None):
-    """Creates a persistent audit log entry for scheduler & admin actions."""
-    log = AuditLog(
-        user_id=user_id,
-        action=action,
-        question_set_id=question_set_id,
-        details=details,
-        created_at=datetime.utcnow()
-    )
-    db.add(log)
+def create_audit_log(db, action: str, user_id: Optional[int] = None, question_set_id: Optional[int] = None, details: Optional[str] = None):
+    log_id = get_next_sequence(db, "audit_log_id")
+    db.audit_logs.insert_one({
+        "id": log_id,
+        "user_id": user_id,
+        "action": action,
+        "question_set_id": question_set_id,
+        "details": details,
+        "created_at": datetime.utcnow()
+    })
 
-def activate_daily_sets_transaction(db: Session, target_date_str: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Atomic & Idempotent daily status transition:
-    1. Expire currently ACTIVE QuestionSets whose schedule_date is older than target_date_str,
-       or whenever today's SCHEDULED set is ready to activate for the same test.
-    2. Activate SCHEDULED QuestionSets for target_date_str.
-    3. Update published_at / expired_at timestamps.
-    4. Log audit events.
-    5. NEVER delete expired questions or historical attempts.
-    """
+def activate_daily_sets_transaction(db, target_date_str: Optional[str] = None) -> Dict[str, Any]:
     if not target_date_str:
         target_date_str = get_current_ist_date_str()
 
@@ -84,35 +65,37 @@ def activate_daily_sets_transaction(db: Session, target_date_str: Optional[str] 
     activated_ids = []
 
     try:
-        # Find scheduled sets for target date or earlier that need activation
-        scheduled_sets = db.query(QuestionSet).filter(
-            QuestionSet.status == QuestionSetStatus.SCHEDULED,
-            QuestionSet.schedule_date <= target_date_str
-        ).order_by(QuestionSet.schedule_date.asc(), QuestionSet.id.asc()).all()
+        scheduled_sets_docs = list(db.question_sets.find(
+            {"status": QuestionSetStatus.SCHEDULED, "schedule_date": {"$lte": target_date_str}},
+            sort=[("schedule_date", 1), ("id", 1)]
+        ))
 
-        for s_set in scheduled_sets:
-            # Check for existing ACTIVE sets for the same exam & test
-            active_sets = db.query(QuestionSet).filter(
-                QuestionSet.exam_id == s_set.exam_id,
-                QuestionSet.test_id == s_set.test_id,
-                QuestionSet.status == QuestionSetStatus.ACTIVE,
-                QuestionSet.id != s_set.id
-            ).all()
+        for s_doc in scheduled_sets_docs:
+            s_set = to_mongo_doc(s_doc)
+            active_sets_docs = list(db.question_sets.find({
+                "exam_id": s_set.exam_id,
+                "test_id": s_set.test_id,
+                "status": QuestionSetStatus.ACTIVE,
+                "id": {"$ne": s_set.id}
+            }))
 
-            for old_active in active_sets:
-                old_active.status = QuestionSetStatus.EXPIRED
-                old_active.expired_at = now_utc
-                expired_ids.append(old_active.id)
+            for old_active in active_sets_docs:
+                db.question_sets.update_one(
+                    {"id": old_active["id"]},
+                    {"$set": {"status": QuestionSetStatus.EXPIRED, "expired_at": now_utc}}
+                )
+                expired_ids.append(old_active["id"])
                 create_audit_log(
                     db,
                     action="QUESTION_SET_EXPIRED",
-                    question_set_id=old_active.id,
-                    details=f"Expired set '{old_active.title}' (Date: {old_active.schedule_date}) upon activation of set #{s_set.id}."
+                    question_set_id=old_active["id"],
+                    details=f"Expired set '{old_active.get('title')}' (Date: {old_active.get('schedule_date')}) upon activation of set #{s_set.id}."
                 )
 
-            # Activate the scheduled set
-            s_set.status = QuestionSetStatus.ACTIVE
-            s_set.published_at = now_utc
+            db.question_sets.update_one(
+                {"id": s_set.id},
+                {"$set": {"status": QuestionSetStatus.ACTIVE, "published_at": now_utc}}
+            )
             activated_ids.append(s_set.id)
             create_audit_log(
                 db,
@@ -121,25 +104,25 @@ def activate_daily_sets_transaction(db: Session, target_date_str: Optional[str] 
                 details=f"Activated question set '{s_set.title}' for date {s_set.schedule_date} at 12:00 PM IST."
             )
 
-        # Expire any orphaned ACTIVE sets whose schedule date is older than today
-        outdated_active_sets = db.query(QuestionSet).filter(
-            QuestionSet.status == QuestionSetStatus.ACTIVE,
-            QuestionSet.schedule_date < target_date_str
-        ).all()
+        outdated_active_docs = list(db.question_sets.find({
+            "status": QuestionSetStatus.ACTIVE,
+            "schedule_date": {"$lt": target_date_str}
+        }))
 
-        for out_set in outdated_active_sets:
-            if out_set.id not in expired_ids:
-                out_set.status = QuestionSetStatus.EXPIRED
-                out_set.expired_at = now_utc
-                expired_ids.append(out_set.id)
+        for out_doc in outdated_active_docs:
+            if out_doc["id"] not in expired_ids:
+                db.question_sets.update_one(
+                    {"id": out_doc["id"]},
+                    {"$set": {"status": QuestionSetStatus.EXPIRED, "expired_at": now_utc}}
+                )
+                expired_ids.append(out_doc["id"])
                 create_audit_log(
                     db,
                     action="QUESTION_SET_EXPIRED",
-                    question_set_id=out_set.id,
-                    details=f"Expired outdated active set '{out_set.title}' (Date: {out_set.schedule_date})."
+                    question_set_id=out_doc["id"],
+                    details=f"Expired outdated active set '{out_doc.get('title')}' (Date: {out_doc.get('schedule_date')})."
                 )
 
-        db.commit()
         logger.info(f"[Daily Scheduler] Activated sets: {activated_ids}, Expired sets: {expired_ids} for date {target_date_str}")
         return {
             "status": "success",
@@ -150,15 +133,10 @@ def activate_daily_sets_transaction(db: Session, target_date_str: Optional[str] 
             "expired_ids": expired_ids
         }
     except Exception as e:
-        db.rollback()
         logger.error(f"[Daily Scheduler Error] Transaction failed: {str(e)}")
         raise e
 
-def reconcile_daily_question_sets(db: Session) -> Dict[str, Any]:
-    """
-    Executes on application startup to handle recovery from server restarts/downtime.
-    Catches up missed 12:00 PM IST transitions safely and idempotently.
-    """
+def reconcile_daily_question_sets(db) -> Dict[str, Any]:
     logger.info("[Daily Scheduler] Running server-restart reconciliation check...")
     res = activate_daily_sets_transaction(db, target_date_str=get_current_ist_date_str())
     create_audit_log(
@@ -166,25 +144,20 @@ def reconcile_daily_question_sets(db: Session) -> Dict[str, Any]:
         action="QUESTION_SET_SCHEDULER_RECOVERY",
         details=f"Server startup reconciliation completed. Activated: {res['activated_count']}, Expired: {res['expired_count']}."
     )
-    db.commit()
     return res
 
-# Global Scheduler Instance
 app_scheduler = BackgroundScheduler(timezone=IST_TIMEZONE)
 
 def _run_scheduled_job():
-    """Job handler called by APScheduler every day at 12:00:00 PM IST."""
     logger.info("[Daily Scheduler Cron] Triggering 12:00 PM IST daily transition job...")
-    db = SessionLocal()
+    db = get_mongo_db()
     try:
         activate_daily_sets_transaction(db)
-    finally:
-        db.close()
+    except Exception as e:
+        logger.error(f"Error during scheduled job execution: {e}")
 
 def start_scheduler():
-    """Starts the background APScheduler cron for daily 12:00 PM IST execution."""
     if not app_scheduler.running:
-        # Schedule cron at 12:00 PM Asia/Kolkata
         app_scheduler.add_job(
             _run_scheduled_job,
             trigger=CronTrigger(hour=12, minute=0, second=0, timezone=IST_TIMEZONE),
