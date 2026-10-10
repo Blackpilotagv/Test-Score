@@ -4,7 +4,7 @@ export type ExamStatus = 'ACTIVE' | 'INACTIVE';
 export type TestStatus = 'PUBLISHED' | 'DRAFT';
 export type PaymentStatus = 'PENDING' | 'SUCCESS' | 'FAILED' | 'REFUNDED';
 export type PaymentMethod = 'MOCK' | 'ADMIN_GRANTED' | 'RAZORPAY';
-export type AttemptStatus = 'IN_PROGRESS' | 'SUBMITTED' | 'EXPIRED';
+export type AttemptStatus = 'IN_PROGRESS' | 'SUBMITTED' | 'EXPIRED' | 'COMPLETED';
 export type QuestionSetStatus = 'DRAFT' | 'SCHEDULED' | 'ACTIVE' | 'EXPIRED' | 'CANCELLED';
 export type PastYearPaperStatus = 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'ARCHIVED';
 

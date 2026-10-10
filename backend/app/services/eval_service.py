@@ -17,7 +17,7 @@ def evaluate_attempt(db, attempt_id: int):
     if attempt.status == AttemptStatus.SUBMITTED:
         return attempt
 
-    marks_per_question = 1.0
+    marks_per_question = 1.5
     negative_mark = 0.0
 
     if attempt.past_year_paper_id:
@@ -26,10 +26,27 @@ def evaluate_attempt(db, attempt_id: int):
             marks_per_question = float(paper_doc.get("marks_per_question", 1.5))
             negative_mark = float(paper_doc.get("negative_mark", 0.0))
         q_docs = list(db.questions.find({"past_year_paper_id": attempt.past_year_paper_id}))
-    elif attempt.question_set_id:
-        q_docs = list(db.questions.find({"question_set_id": attempt.question_set_id}))
-    else:
-        q_docs = list(db.questions.find({"test_id": attempt.test_id}))
+    elif attempt.question_set_id or attempt.test_id:
+        test_id = attempt.test_id
+        if not test_id and attempt.question_set_id:
+            qs_doc = db.question_sets.find_one({"id": attempt.question_set_id})
+            test_id = qs_doc.get("test_id") if qs_doc else None
+        
+        if test_id:
+            test_doc = db.tests.find_one({"id": test_id})
+            if test_doc:
+                exam_doc = db.exams.find_one({"id": test_doc.get("exam_id")})
+                if exam_doc:
+                    slug = exam_doc.get("slug")
+                    from app.core.config import EXAM_CONFIG
+                    cfg = EXAM_CONFIG.get(slug, {})
+                    marks_per_question = float(cfg.get("marks_per_question", test_doc.get("marks_per_question", 1.5)))
+                    negative_mark = float(cfg.get("negative_mark", test_doc.get("negative_mark", 0.0)))
+        
+        if attempt.question_set_id:
+            q_docs = list(db.questions.find({"question_set_id": attempt.question_set_id}))
+        else:
+            q_docs = list(db.questions.find({"test_id": attempt.test_id}))
 
     group_map = {}
     for q in q_docs:

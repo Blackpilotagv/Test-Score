@@ -37,18 +37,18 @@ def start_exam_attempt(
 
     allowed_langs = validate_language_for_test(db, test, req.language)
 
-    # Access control: Must have SUCCESS payment record
-    payment = db.payments.find_one({
-        "user_id": current_user.id,
-        "test_id": test.id,
-        "status": PaymentStatus.SUCCESS
-    })
-
-    if not payment:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Unauthorized. You must purchase this test before attending."
-        )
+    # Access control: Must have SUCCESS payment record if test price > 0
+    if test.price > 0:
+        payment = db.payments.find_one({
+            "user_id": current_user.id,
+            "test_id": test.id,
+            "status": PaymentStatus.SUCCESS
+        })
+        if not payment:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Unauthorized. Payment required to access this exam portal."
+            )
 
     # Check for active attempt
     attempt_doc = db.test_attempts.find_one(

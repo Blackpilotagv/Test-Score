@@ -62,15 +62,15 @@ def seed_db():
             {
                 "name": "TNPSC Group 1",
                 "slug": "tnpsc-group-1",
-                "description": "Deputy Collector, DSP & Class-I Services Daily Mock Assessments (Tamil Medium).",
+                "description": "Deputy Collector, DSP & Class-I Services Daily Assessments (Tamil & English Medium).",
                 "price": 99.0,
-                "language_mode": "TA",
+                "language_mode": "TA_EN",
                 "status": ExamStatus.ACTIVE
             },
             {
-                "name": "TNPSC Group 2",
+                "name": "TNPSC Group 2 & 2A",
                 "slug": "tnpsc-group-2",
-                "description": "Sub Registrar, Municipal Commissioner & Group 2 Services (Tamil + English Medium).",
+                "description": "Sub Registrar, Municipal Commissioner & Group 2 Services (Tamil & English Medium).",
                 "price": 49.0,
                 "language_mode": "TA_EN",
                 "status": ExamStatus.ACTIVE
@@ -78,9 +78,25 @@ def seed_db():
             {
                 "name": "TNPSC Group 4",
                 "slug": "tnpsc-group-4",
-                "description": "VAO, Junior Assistant, Typist & Steno-Typist Examinations (Tamil Medium).",
+                "description": "VAO, Junior Assistant, Typist & Steno-Typist Examinations (Tamil & English Medium).",
                 "price": 29.0,
-                "language_mode": "TA",
+                "language_mode": "TA_EN",
+                "status": ExamStatus.ACTIVE
+            },
+            {
+                "name": "UPSC General Studies (GS)",
+                "slug": "upsc-gs",
+                "description": "UPSC Civil Services Prelims Paper-I General Studies Mock Assessments (1/3rd Negative Marking).",
+                "price": 149.0,
+                "language_mode": "EN",
+                "status": ExamStatus.ACTIVE
+            },
+            {
+                "name": "UPSC CSAT",
+                "slug": "upsc-csat",
+                "description": "UPSC Civil Services Prelims Paper-II CSAT Aptitude & Comprehension (1/3rd Negative Marking).",
+                "price": 99.0,
+                "language_mode": "EN",
                 "status": ExamStatus.ACTIVE
             }
         ]
@@ -513,7 +529,7 @@ def seed_db():
                 "question_count": 200,
                 "marks_per_question": 1.5,
                 "negative_mark": 0.0,
-                "price": 0.0 if y != 2025 else 49.0,
+                "price": 0.0,
                 "status": PastYearPaperStatus.PUBLISHED,
                 "created_by": admin_id,
                 "created_at": now,
@@ -610,7 +626,97 @@ def seed_db():
                 "updated_at": now
             })
 
-        print("Seeded Past Year Papers (2025-2021) for Group 1, Group 2, and Group 4.")
+            # UPSC GS Paper
+            upsc_gs_exam = exams_by_slug.get("upsc-gs")
+            if upsc_gs_exam:
+                p_ugs_id = get_next_sequence(db, "past_year_paper_id")
+                p_ugs = {
+                    "id": p_ugs_id,
+                    "exam_id": upsc_gs_exam["id"],
+                    "year": y,
+                    "title": f"UPSC Civil Services GS Paper-I Official Paper {y}",
+                    "description": f"Official UPSC CSE General Studies Paper 1 Question Paper ({y}) with 1/3rd Negative Marking.",
+                    "duration_minutes": 120,
+                    "question_count": 100,
+                    "marks_per_question": 2.0,
+                    "negative_mark": 0.66,
+                    "price": 0.0,
+                    "status": PastYearPaperStatus.PUBLISHED,
+                    "created_by": admin_id,
+                    "created_at": now,
+                    "updated_at": now
+                }
+                db.past_year_papers.insert_one(p_ugs)
+
+                q_id_ugs = get_next_sequence(db, "question_id")
+                db.questions.insert_one({
+                    "id": q_id_ugs,
+                    "test_id": None,
+                    "question_set_id": None,
+                    "past_year_paper_id": p_ugs_id,
+                    "question_group_id": 8000 + y,
+                    "language": "en",
+                    "question_text": f"UPSC GS ({y}): Which article of the Constitution of India provides for the Right to Equality before Law?",
+                    "option_a": "Article 14",
+                    "option_b": "Article 19",
+                    "option_c": "Article 21",
+                    "option_d": "Article 32",
+                    "correct_option": "A",
+                    "explanation": "Article 14 of the Constitution guarantees Equality Before Law and Equal Protection of Laws.",
+                    "question_order": 1,
+                    "source": "MANUAL",
+                    "question_source": "ORIGINAL",
+                    "status": "ACTIVE",
+                    "created_at": now,
+                    "updated_at": now
+                })
+
+            # UPSC CSAT Paper
+            upsc_csat_exam = exams_by_slug.get("upsc-csat")
+            if upsc_csat_exam:
+                p_ucsat_id = get_next_sequence(db, "past_year_paper_id")
+                p_ucsat = {
+                    "id": p_ucsat_id,
+                    "exam_id": upsc_csat_exam["id"],
+                    "year": y,
+                    "title": f"UPSC Civil Services CSAT Paper-II Official Paper {y}",
+                    "description": f"Official UPSC CSE CSAT Paper 2 Aptitude Question Paper ({y}) with 1/3rd Negative Marking.",
+                    "duration_minutes": 120,
+                    "question_count": 80,
+                    "marks_per_question": 2.5,
+                    "negative_mark": 0.83,
+                    "price": 0.0,
+                    "status": PastYearPaperStatus.PUBLISHED,
+                    "created_by": admin_id,
+                    "created_at": now,
+                    "updated_at": now
+                }
+                db.past_year_papers.insert_one(p_ucsat)
+
+                q_id_ucsat = get_next_sequence(db, "question_id")
+                db.questions.insert_one({
+                    "id": q_id_ucsat,
+                    "test_id": None,
+                    "question_set_id": None,
+                    "past_year_paper_id": p_ucsat_id,
+                    "question_group_id": 9000 + y,
+                    "language": "en",
+                    "question_text": f"UPSC CSAT ({y}): A train 150m long is running at 60 km/h. Time taken to cross a tree standing beside the track is:",
+                    "option_a": "9 seconds",
+                    "option_b": "10 seconds",
+                    "option_c": "12 seconds",
+                    "option_d": "15 seconds",
+                    "correct_option": "A",
+                    "explanation": "Speed = 60 * 5/18 = 50/3 m/s. Time = Distance / Speed = 150 / (50/3) = 9 seconds.",
+                    "question_order": 1,
+                    "source": "MANUAL",
+                    "question_source": "ORIGINAL",
+                    "status": "ACTIVE",
+                    "created_at": now,
+                    "updated_at": now
+                })
+
+        print("Seeded Past Year Papers (2025-2021) for TNPSC (Group 1, 2, 4) and UPSC (GS, CSAT).")
         print("MongoDB database seeding completed successfully!")
 
     except Exception as e:

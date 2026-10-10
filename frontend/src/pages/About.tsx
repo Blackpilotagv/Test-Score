@@ -21,11 +21,11 @@ export const About: React.FC = () => {
           <Target className="w-5 h-5 text-sky-600" /> Platform Mission
         </h2>
         <p>
-          Our platform provides daily online assessments specifically structured for competitive-exam preparation targeting <strong>TNPSC Group 1, TNPSC Group 2, TNPSC Group 4, and TNPSC Group 4A</strong>.
+          Our platform provides daily online assessments and FREE 5-year past year question papers specifically structured for competitive exam preparation targeting <strong>TNPSC Group 1, TNPSC Group 2 & 2A, TNPSC Group 4, UPSC General Studies (GS), and UPSC CSAT</strong>.
         </p>
 
         <p>
-          Students can select their desired exam category, purchase daily test assessments, attend online timed examinations, receive instant evaluated results, and track their historical performance on a personal dashboard.
+          Category 1 features <strong>Daily Test Assessments</strong> (unlocked per purchase, rotating daily at 12:00 PM IST). Category 2 features <strong>FREE Past Year Papers</strong> (2021–2025) with real-time timed test engine, auto-save, instant score evaluation with negative marking penalty calculations, and detailed solutions.
         </p>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-gray-100">

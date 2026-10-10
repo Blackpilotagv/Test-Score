@@ -24,7 +24,19 @@ export const ExamEngine: React.FC = () => {
 
   const [isPastYear, setIsPastYear] = useState<boolean>(false);
 
-  // Load initial attempt data
+  // Trap browser Back button to prevent re-entering live exam portal
+  useEffect(() => {
+    window.history.pushState(null, '', window.location.href);
+    const handlePopState = () => {
+      window.history.pushState(null, '', window.location.href);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, []);
+
+  // Load initial attempt data & enforce post-exam portal isolation
   useEffect(() => {
     if (!attemptId) return;
 
@@ -32,6 +44,10 @@ export const ExamEngine: React.FC = () => {
     API.get(`/past-year-papers/attempts/${attemptId}?language=ta`)
       .then((res) => {
         const data: AttemptEngineData = res.data;
+        if (data.status === 'SUBMITTED' || data.status === 'EXPIRED' || data.status === 'COMPLETED') {
+          navigate(`/result/${attemptId}`, { replace: true });
+          return;
+        }
         setEngineData(data);
         setIsPastYear(true);
         setCurrentLanguage(data.current_language || 'ta');
@@ -43,6 +59,10 @@ export const ExamEngine: React.FC = () => {
         API.get(`/attempts/${attemptId}?language=ta`)
           .then((res) => {
             const data: AttemptEngineData = res.data;
+            if (data.status === 'SUBMITTED' || data.status === 'EXPIRED' || data.status === 'COMPLETED') {
+              navigate(`/result/${attemptId}`, { replace: true });
+              return;
+            }
             setEngineData(data);
             setIsPastYear(false);
             setCurrentLanguage(data.current_language || 'ta');
@@ -51,7 +71,7 @@ export const ExamEngine: React.FC = () => {
           })
           .catch((err) => {
             alert(err.response?.data?.detail || 'Failed to load exam attempt.');
-            navigate('/dashboard');
+            navigate('/dashboard', { replace: true });
           });
       })
       .finally(() => setLoading(false));
@@ -134,10 +154,10 @@ export const ExamEngine: React.FC = () => {
         ? `/past-year-papers/attempts/${attemptId}/submit`
         : `/attempts/${attemptId}/submit`;
       await API.post(endpoint);
-      navigate(`/result/${attemptId}?language=${currentLanguage}`);
+      navigate(`/result/${attemptId}?language=${currentLanguage}`, { replace: true });
     } catch (err) {
       console.error(err);
-      navigate(`/result/${attemptId}?language=${currentLanguage}`);
+      navigate(`/result/${attemptId}?language=${currentLanguage}`, { replace: true });
     }
   };
 
@@ -149,7 +169,7 @@ export const ExamEngine: React.FC = () => {
         ? `/past-year-papers/attempts/${attemptId}/submit`
         : `/attempts/${attemptId}/submit`;
       await API.post(endpoint);
-      navigate(`/result/${attemptId}?language=${currentLanguage}`);
+      navigate(`/result/${attemptId}?language=${currentLanguage}`, { replace: true });
     } catch (error: any) {
       alert(error.response?.data?.detail || 'Failed to submit exam.');
       setSubmitting(false);

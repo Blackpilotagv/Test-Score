@@ -122,10 +122,10 @@ export const PastYearPapersPage: React.FC = () => {
             <Award className="w-4 h-4" /> Official Previous Years Question Papers
           </span>
           <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight">
-            Past 5 Years TNPSC Question Papers (2021 – 2025)
+            Past 5 Years TNPSC & UPSC Question Papers (2021 – 2025)
           </h1>
           <p className="text-sky-200 text-sm sm:text-base leading-relaxed">
-            Practice actual past-year original papers for TNPSC Group 1, Group 2 & Group 4 with real-time timed test engine, instant evaluation & detailed solutions. Permanent access included.
+            Practice actual past-year original papers for TNPSC (Group 1, Group 2 & 2A, Group 4) & UPSC (GS & CSAT) with real-time timed test engine, instant evaluation & detailed solutions. 100% FREE permanent access.
           </p>
         </div>
       </div>

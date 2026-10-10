@@ -72,7 +72,7 @@ export const ExamDetails: React.FC = () => {
     );
   }
 
-  const isGroup2 = exam.slug === 'tnpsc-group-2';
+  const isUpsc = exam.slug.startsWith('upsc');
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-12 space-y-8">
@@ -85,10 +85,10 @@ export const ExamDetails: React.FC = () => {
                 {exam.name}
               </span>
               <span className={`text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1 ${
-                isGroup2 ? 'bg-indigo-500/30 text-indigo-200' : 'bg-emerald-500/30 text-emerald-200'
+                isUpsc ? 'bg-purple-500/30 text-purple-200' : 'bg-emerald-500/30 text-emerald-200'
               }`}>
                 <Globe className="w-3.5 h-3.5" />
-                {isGroup2 ? 'தமிழ் + English Medium' : 'தமிழ் Medium Only'}
+                {isUpsc ? 'English Medium Only' : 'தமிழ் + English Medium'}
               </span>
             </div>
             <h1 className="text-3xl font-extrabold mt-3">{exam.name} Daily Assessments</h1>
@@ -147,7 +147,7 @@ export const ExamDetails: React.FC = () => {
                 </div>
                 <div>
                   <span className="text-xs text-gray-500 block">Languages</span>
-                  <strong className="text-sky-800 font-bold">{isGroup2 ? 'Tamil & English' : 'Tamil Only'}</strong>
+                  <strong className="text-sky-800 font-bold">{isUpsc ? 'English Only' : 'Tamil & English'}</strong>
                 </div>
                 <div>
                   <span className="text-xs text-gray-500 block">Price</span>

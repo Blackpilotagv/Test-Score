@@ -67,7 +67,7 @@ def process_mock_payment(
     current_user = Depends(get_current_user)
 ):
     """
-    Development Mode Mock Gateway Callback Simulator.
+    Development Mode / Test Gateway Callback Simulator.
     Processes user choice on the 'DEMO / TEST PAYMENT' screen (Test Payment - Success / Failed).
     """
     payment_service = get_payment_service()
@@ -87,6 +87,50 @@ def process_mock_payment(
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/verify-razorpay")
+def verify_razorpay_payment(
+    req: dict,
+    db = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    Verifies Razorpay payment signature and unlocks exam access on success.
+    """
+    order_id = req.get("razorpay_order_id") or req.get("order_id")
+    payment_id = req.get("razorpay_payment_id") or req.get("payment_id")
+    signature = req.get("razorpay_signature", "")
+
+    if not order_id:
+        raise HTTPException(status_code=400, detail="Missing order_id")
+
+    payment_service = get_payment_service()
+    if hasattr(payment_service, 'verify_razorpay_signature'):
+        is_valid = payment_service.verify_razorpay_signature(
+            db=db,
+            razorpay_order_id=order_id,
+            razorpay_payment_id=payment_id or "pay_rzp_mock",
+            razorpay_signature=signature
+        )
+        if is_valid:
+            pmt = db.payments.find_one({"gateway_order_id": order_id})
+            return {
+                "status": "SUCCESS",
+                "message": "Payment verified successfully. Exam unlocked!",
+                "test_id": pmt.get("test_id") if pmt else None,
+                "past_year_paper_id": pmt.get("past_year_paper_id") if pmt else None
+            }
+        else:
+            raise HTTPException(status_code=400, detail="Invalid payment signature")
+    else:
+        # Fallback for mock service
+        pmt = payment_service.process_payment_result(db, order_id=order_id, success=True)
+        return {
+            "status": "SUCCESS",
+            "message": "Payment marked SUCCESS! Access unlocked.",
+            "test_id": pmt.test_id,
+            "past_year_paper_id": pmt.past_year_paper_id
+        }
 
 @router.get("/history", response_model=List[PaymentOut])
 def get_payment_history(

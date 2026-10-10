@@ -235,6 +235,11 @@ class ProcessMockPaymentRequest(BaseModel):
     order_id: str
     success: bool
 
+class VerifyRazorpayRequest(BaseModel):
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+
 class AdminGrantAccessRequest(BaseModel):
     user_id_or_email: str
     test_id: Optional[int] = None
